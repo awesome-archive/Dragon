@@ -23,9 +23,12 @@ from dragon.vm.torch.ops.builtin import (
     _fundamental, _rfundamental,
     log, exp, sqrt, clamp,
     _reshape, squeeze, unsqueeze,
-    _permute, _repeat, _indexing, _assigning, narrow,
+    _permute, _repeat, chunk, narrow, _index,
+    _assign, _masked_assign,
+    index_select, masked_select,
     mean, sum, max, min,
-    gt, lt, eq, ge, le,
+    gt, lt, eq, ne, ge, le,
+    where, nonzero,
 )
 
 
@@ -39,6 +42,7 @@ def _type_to(input, dtype='float32', inplace=False):
 
 
 Tensor.fill_ = lambda self, value: _fill(self, self.shape, value)
+Tensor.masked_fill_ = lambda *args, **kwargs: _masked_assign(*args, **kwargs)
 Tensor.uniform_ = lambda self, low=0, high=1: _uniform(self, self.shape, low, high)
 Tensor.normal_ = lambda self, mean=0, std=1: _normal(self, self.shape, mean, std)
 Tensor.multinomial = lambda *args, **kwargs: multinomial(*args, **kwargs)
@@ -72,6 +76,7 @@ Tensor.view = lambda self, *shape: _reshape(self, shape)
 Tensor.view_as = lambda *args, **kwargs: _reshape(*args, **kwargs)
 Tensor.permute = lambda self, *dims: _permute(self, dims)
 Tensor.repeat = lambda self, *args: _repeat(self, args)
+Tensor.chunk = lambda *args, **kwargs: chunk(*args, **kwargs)
 Tensor.mean = lambda *args, **kwargs: mean(*args, **kwargs)
 Tensor.sum = lambda *args, **kwargs: sum(*args, **kwargs)
 Tensor.max = lambda *args, **kwargs: max(*args, **kwargs)
@@ -81,9 +86,14 @@ Tensor.ge = lambda *args, **kwargs: ge(*args, **kwargs)
 Tensor.lt = lambda *args, **kwargs: lt(*args, **kwargs)
 Tensor.le = lambda *args, **kwargs: le(*args, **kwargs)
 Tensor.eq = lambda *args, **kwargs: eq(*args, **kwargs)
+Tensor.ne = lambda *args, **kwargs: ne(*args, **kwargs)
+Tensor.nonzero = lambda *args, **kwargs: nonzero(*args, **kwargs)
+Tensor.where = lambda self, condition, y: where(condition, self, y)
 Tensor.narrow = lambda *args, **kwargs: narrow(*args, **kwargs)
-Tensor._indexing = lambda *args, **kwargs: _indexing(*args, **kwargs)
-Tensor._assigning = lambda *args, **kwargs: _assigning(*args, **kwargs)
+Tensor._index = lambda *args, **kwargs: _index(*args, **kwargs)
+Tensor._assign = lambda *args, **kwargs: _assign(*args, **kwargs)
+Tensor.index_select = lambda *args, **kwargs: index_select(*args, **kwargs)
+Tensor.masked_select = lambda *args, **kwargs: masked_select(*args, **kwargs)
 
 
 Tensor.half = lambda self: _type_to(self, dtype='float16', inplace=False)
@@ -100,5 +110,5 @@ Tensor.int = lambda self: _type_to(self, dtype='int32', inplace=False)
 Tensor.int_ = lambda self: _type_to(self, dtype='int32', inplace=True)
 Tensor.long = lambda self: _type_to(self, dtype='int64', inplace=False)
 Tensor.long_ = lambda self: _type_to(self, dtype='int64', inplace=True)
-Tensor.type = lambda self, dtype=None: _type_to(self, dtype=dtype) \
+Tensor.type = lambda self, dtype = None: _type_to(self, dtype=dtype) \
     if dtype is not None else 'torch.' + self._type2str()

@@ -15,12 +15,18 @@ from __future__ import print_function
 
 import six
 import numpy
-import dragon
 
-from dragon.core import mapping, tensor_utils, proto_utils
-from dragon.vm.torch.pool import TensorPool
-from dragon.vm.torch.c_api import Size, from_dragon
+from dragon import config as _cfg
+from dragon.core import mapping as _mapping
+from dragon.core.tensor import Tensor as _Tensor
+from dragon.core import proto_utils as _proto_utils
+from dragon.core import tensor_utils as _tensor_utils
+from dragon import get_default_workspace as _workspace
+
+from dragon.vm.torch.c_api import Size as _Size
 from dragon.vm.torch.c_api import device as _Device
+from dragon.vm.torch.c_api import _get_tensor_pool
+from dragon.vm.torch.c_api import from_dragon as _from_dragon
 
 
 class Tensor(object):
@@ -44,44 +50,45 @@ class Tensor(object):
         if len(args) == 0:
             # + empty tensor, not leaf
             if self._tensor is not None:
-                dragon.C.CreateTensor(self._tensor)
+                _workspace().CreateTensor(self._tensor)
         elif len(args) == 1:
             if isinstance(args[0], (list, tuple)):
                 # + torch.Tensor(sequence)
-                self._init_from_numpy(numpy.array(
-                    args[0], dtype=kwargs.get('dtype', 'float32')))
+                dtype = kwargs.get('dtype', 'float32')
+                self._from_numpy(numpy.array(args[0], dtype=dtype))
             elif isinstance(args[0], numpy.ndarray):
                 # + torch.Tensor(array)
-                self._init_from_numpy(args[0])
+                self._from_numpy(args[0], copy=kwargs.get('copy', True))
             else:
                 # + class torch.Tensor(size)
                 if not isinstance(args[0], six.integer_types):
                     raise ValueError('Excepted integer as size.')
-                self._init_from_shape(args[0], kwargs.get('dtype', 'float32'))
+                self._from_shape(args[0], kwargs.get('dtype', 'float32'))
         else:
             # + torch.Tensor(*sizes)
             if not all(isinstance(arg, six.integer_types) for arg in args):
                 raise ValueError('Excepted integer(s) as sizes.')
-            self._init_from_shape(args, kwargs.get('dtype', 'float32'))
+            self._from_shape(args, kwargs.get('dtype', 'float32'))
 
         # Store the reference of backend
-        self._storage = dragon.C.GetTensor(self.name) \
-            if self.name is not None else None
+        self._storage = _workspace().GetTensor(
+            self.name) if self.name is not None else None
 
-    def _init_from_numpy(self, array):
-        self._static_shape = Size(array.shape)
+    def _from_numpy(self, array, copy=True):
+        self._static_shape = _Size(array.shape)
         # We use the scope of ``numpy`` instead of ``leaf``
         # As it is costly to switch memory between ``copy`` and ``zero-copy``
-        self._tensor = tensor_utils.FromPyArray(
-            array, TensorPool.get('${NUMPY}'))
+        if copy: array = array.copy()
+        self._tensor = _tensor_utils.FromArray(
+            array, _get_tensor_pool().get('${NUMPY}'))
         self._ignored_grads = {self.name + '_grad'} \
             if not self._requires_grad else None
 
-    def _init_from_shape(self, shape, dtype):
+    def _from_shape(self, shape, dtype):
         if isinstance(shape, six.integer_types): shape = [shape]
-        self._static_shape = Size(shape)
-        self._tensor = tensor_utils.FromShape(
-            shape, dtype, TensorPool.get('${LEAF}'))
+        self._static_shape = _Size(shape)
+        self._tensor = _tensor_utils.FromShape(
+            shape, dtype, _get_tensor_pool().get('${LEAF}'))
         self._ignored_grads = {self.name + '_grad'} \
             if not self._requires_grad else None
 
@@ -137,7 +144,7 @@ class Tensor(object):
             The self.
 
         """
-        if device is None: device = dragon.config.GetGPU()
+        if device is None: device = _cfg.GetGPU()
         self._storage.ToCUDA(device)
         self._device.type, self._device.index = 'cuda', device
         return self
@@ -156,7 +163,7 @@ class Tensor(object):
             The numpy array.
 
         """
-        return tensor_utils.ToPyArray(self._tensor, readonly)
+        return _tensor_utils.ToArray(self._tensor, readonly)
 
     def dragon(self):
         """Create a dragon tensor sharing this tensor.
@@ -168,7 +175,7 @@ class Tensor(object):
 
         """
         if isinstance(self._tensor, str):
-            return dragon.Tensor.Ref(self._tensor,
+            return _Tensor.Ref(self._tensor,
                 shape=self.shape, dtype=self.dtype)
         else: return self._tensor
 
@@ -348,7 +355,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        other : dragon.vm.torch.Tensor, number
+        other : dragon.vm.torch.Tensor or number
             The other tensor.
 
         Returns
@@ -364,7 +371,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        other : dragon.vm.torch.Tensor, number
+        other : dragon.vm.torch.Tensor or number
             The other tensor.
 
         Returns
@@ -380,7 +387,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        other : dragon.vm.torch.Tensor, number
+        other : dragon.vm.torch.Tensor or number
             The other tensor.
 
         Returns
@@ -396,7 +403,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        other : dragon.vm.torch.Tensor, number
+        other : dragon.vm.torch.Tensor or number
             The other tensor.
 
         Returns
@@ -412,7 +419,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        other : dragon.vm.torch.Tensor, number
+        other : dragon.vm.torch.Tensor or number
             The other tensor.
 
         Returns
@@ -453,8 +460,8 @@ class Tensor(object):
             The float value.
 
         """
-        if self.numel() == 1: return float(str(self.data.squeeze()))
-        raise TypeError('Only size-1 arrays can be converted to Python scalars')
+        if self.numel() == 1: return float(self.numpy(readonly=True))
+        raise TypeError('Only size-1 array can be converted to Python scalars.')
 
     def __int__(self):
         """Return a int Python scalar of size-1 tensor.
@@ -473,7 +480,7 @@ class Tensor(object):
                 # Always reuse the leaf variables or
                 # tensors that do not require grad
                 # PyGC will detect them automatically
-                TensorPool.put(self.name)
+                _get_tensor_pool().put(self.name)
 
     def _process_indices(self, item):
         if not isinstance(item, (slice, tuple)):
@@ -517,7 +524,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        item : int or slice
+        item : int, slice or dragon.vm.torch.Tensor
             The indices.
 
         Returns
@@ -526,17 +533,20 @@ class Tensor(object):
             The output tensor.
 
         """
-        starts, sizes = self._process_indices(item)
-        return self._indexing(starts, sizes)
+        if isinstance(item, Tensor):
+            return self.masked_select(item)
+        else:
+            starts, sizes = self._process_indices(item)
+            return self._index(starts, sizes)
 
     def __setitem__(self, key, value):
         """Set the value at the specific indices.
 
         Parameters
         ----------
-        key : int, slice
+        key : int, slice or dragon.vm.torch.Tensor
             The indices.
-        value : dragon.vm.torch.Tensor, number or sequence
+        value : number, sequence or dragon.vm.torch.Tensor
             The value.
 
         Returns
@@ -544,8 +554,11 @@ class Tensor(object):
         None
 
         """
-        starts, sizes = self._process_indices(key)
-        return self._assigning(value, starts, sizes)
+        if isinstance(key, Tensor):
+            return self.masked_fill_(key, value)
+        else:
+            starts, sizes = self._process_indices(key)
+            return self._assign(starts, sizes, value)
 
     def __hash__(self):
         return id(self)
@@ -570,7 +583,7 @@ class Tensor(object):
             The size.
 
         """
-        s = Size(self._storage.dims)
+        s = _Size(self._storage.dims)
         return s[axis] if axis is not None else s
 
     @property
@@ -701,7 +714,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.squeeze_')
 
     def unsqueeze(self, dim):
-        """Returns a tensor with a dimension of size 1 inserted at the specified position.
+        """Return a tensor with a dimension of size 1 inserted at the specified position.
 
         Parameters
         ----------
@@ -717,7 +730,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.unsqueeze')
 
     def unsqueeze_(self, dim):
-        """Inplace of ``Tensor.unsqueeze()``
+        """In-place version of ``Tensor.unsqueeze()``
 
         Parameters
         ----------
@@ -819,7 +832,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.narrow')
 
     def repeat(self, *sizes):
-        """Repeat this tensor along the specified dimensions.
+        """Repeat elements along the specified dimensions.
 
         Parameters
         ----------
@@ -833,6 +846,87 @@ class Tensor(object):
 
         """
         raise NotImplementedError('Refer torch.ops.tensor.repeat')
+
+    def chunk(self, chunks, dim=0):
+        """Split self into several parts along the given axis.
+
+        Parameters
+        ----------
+        chunks : int
+            The number of chunks to split.
+        dim : int, optional
+            The dim to split.
+
+        Returns
+        -------
+        sequence of dragon.vm.torch.Tensor
+            The output chunks.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.chunk')
+
+    def nonzero(self):
+        """Return the indices of non-zero elements.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The output tensor.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.nonzero')
+
+    def where(self, condition, y):
+        """Select elements from either ``self`` or ``y``, depending on ``condition``.
+
+        Parameters
+        ----------
+        condition : dragon.vm.torch.Tensor
+            The byte condition tensor.
+        y : dragon.vm.torch.Tensor
+            The elements for *0*.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The output tensor.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.where')
+
+    def index_select(self, dim, index):
+        """Select the values along the given axis using index.
+
+        Parameters
+        ----------
+        dim : int
+            The dim to gather.
+        index : dragon.vm.torch.Tensor
+            The indices.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The output tensor.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.index_select')
+
+    def masked_select(self, mask):
+        """Select the values where mask is *1*.
+
+        Parameters
+        ----------
+        mask : dragon.vm.torch.Tensor
+            The mask to select values.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The output tensor.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.masked_select')
 
     def copy_(self, src, non_blocking=False):
         """Copy the elements from ``src`` into this tensor and return ``self``.
@@ -851,10 +945,10 @@ class Tensor(object):
 
         """
         # Copy memory
-        tensor_utils.FromTensor(
-            src, proto_utils.GetDeviceOption(
+        _tensor_utils.FromTensor(
+            src, _proto_utils.GetDeviceOption(
                 src.device.type, src.device.index),
-            self.name, proto_utils.GetDeviceOption(
+            self.name, _proto_utils.GetDeviceOption(
                 self.device.type, self.device.index))
         # Transfer the static shape if necessary
         self._static_shape = src.size() \
@@ -862,7 +956,7 @@ class Tensor(object):
         return self
 
     def fill_(self, value):
-        """Fills self tensor with the specified value.
+        """Fill self with the given value.
 
         Parameters
         ----------
@@ -877,8 +971,26 @@ class Tensor(object):
         """
         raise NotImplementedError('Refer torch.ops.tensor.fill_')
 
+    def masked_fill_(self, mask, value):
+        """Fill self with the given value where ``mask`` is *1*.
+
+        Parameters
+        ----------
+        mask : dragon.vm.torch.Tensor
+            The mask.
+        value : number
+            The value to fill.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The self.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.masked_fill_')
+
     def zero_(self):
-        """Fills self tensor with zeros.
+        """Fill self tensor with zeros.
 
         Returns
         -------
@@ -889,7 +1001,7 @@ class Tensor(object):
         self.fill_(0.)
 
     def one_(self):
-        """Fills self tensor with ones.
+        """Fill self tensor with ones.
 
         Returns
         -------
@@ -918,7 +1030,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.uniform_')
 
     def normal_(self, mean=0, std=1):
-        """Fill self tensor with the specified normal distribution.
+        """Fill self with the specified normal distribution.
 
         Parameters
         ----------
@@ -935,7 +1047,7 @@ class Tensor(object):
         """
         raise NotImplementedError('Refer torch.ops.tensor.normal_')
 
-    def multinomial(self, num_samples, normalize=False):
+    def multinomial(self, num_samples, eps=0.):
         """Return a tensor where each row contains ``num_samples``,
            sampled from the multinomial distribution.
 
@@ -943,8 +1055,8 @@ class Tensor(object):
         ----------
         num_samples : int
             The number of samples.
-        normalize : boolean, optional, default=False
-            Whether to normalize the inputs.
+        eps : float, optional, default=0.
+            The prob to a uniform sampling.
 
         Returns
         -------
@@ -955,7 +1067,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.multinomial')
 
     def add(self, value):
-        """See ``torch.add()``
+        """Add the ``self`` and ``value`` into the output tensor.
 
         Parameters
         ----------
@@ -971,7 +1083,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.add')
 
     def add_(self, value):
-        """Inplace of ``torch.add()``
+        """In-place version of ``Tensor.add()``.
 
         Parameters
         ----------
@@ -1003,7 +1115,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.sub')
 
     def sub_(self, value):
-        """Inplace of ``Tensor.sub()``
+        """In-place version of ``Tensor.sub()``
 
         Parameters
         ----------
@@ -1035,7 +1147,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.mul')
 
     def mul_(self, value):
-        """Inplace of ``Tensor.mul()``
+        """In-place version of ``Tensor.mul()``
 
         Parameters
         ----------
@@ -1067,7 +1179,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.div')
 
     def div_(self, value):
-        """Inplace of ``Tensor.div()``
+        """In-place version of ``Tensor.div()``
 
         Parameters
         ----------
@@ -1303,8 +1415,24 @@ class Tensor(object):
         """
         raise NotImplementedError('Refer torch.ops.tensor.eq')
 
+    def ne(self, other):
+        """Compute *self* != *other* element-wise.
+
+        Parameters
+        ----------
+        other : dragon.vm.torch.Tensor, number
+            The other tensor.
+
+        Returns
+        -------
+        dragon.vm.torch.Tensor
+            The output byte tensor.
+
+        """
+        raise NotImplementedError('Refer torch.ops.tensor.ne')
+
     def half(self):
-        """Return a ``float16`` tensor with elements of ``self``.
+        """Return a *float16* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1315,7 +1443,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.half')
 
     def half_(self):
-        """Inplace of ``Tensor.half()``.
+        """In-place version of ``Tensor.half()``.
 
         Returns
         -------
@@ -1337,7 +1465,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.float')
 
     def float_(self):
-        """Inplace of ``Tensor.float()``.
+        """In-place version of ``Tensor.float()``.
 
         Returns
         -------
@@ -1348,7 +1476,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.float_')
 
     def double(self):
-        """Return a ``float64`` tensor with elements of ``self``.
+        """Return a *float64* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1359,7 +1487,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.double')
 
     def double_(self):
-        """Inplace of ``Tensor.double()``.
+        """In-place version of ``Tensor.double()``.
 
         Returns
         -------
@@ -1370,7 +1498,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.double_')
 
     def int(self):
-        """Return a ``int32`` tensor with elements of ``self``.
+        """Return a *int32* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1381,7 +1509,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.int')
 
     def int_(self):
-        """Inplace of ``Tensor.int()``.
+        """In-place version of ``Tensor.int()``.
 
         Returns
         -------
@@ -1392,7 +1520,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.int_')
 
     def long(self):
-        """Return a ``int64`` tensor with elements of ``self``.
+        """Return a *int64* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1403,7 +1531,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.long')
 
     def long_(self):
-        """Inplace of ``Tensor.long()``.
+        """In-place version of ``Tensor.long()``.
 
         Returns
         -------
@@ -1414,7 +1542,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.long_')
 
     def byte(self):
-        """Return a ``uint8`` tensor with elements of ``self``.
+        """Return a *uint8* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1425,7 +1553,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.byte')
 
     def byte_(self):
-        """Inplace of ``Tensor.byte()``.
+        """In-place version of ``Tensor.byte()``.
 
         Returns
         -------
@@ -1436,7 +1564,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.byte_')
 
     def char(self):
-        """Return a ``int8`` tensor with elements of ``self``.
+        """Return a *int8* tensor with elements of ``self``.
 
         Returns
         -------
@@ -1447,7 +1575,7 @@ class Tensor(object):
         raise NotImplementedError('Refer torch.ops.tensor.char')
 
     def char_(self):
-        """Inplace of ``Tensor.char()``.
+        """In-place version of ``Tensor.char()``.
 
         Returns
         -------
@@ -1484,7 +1612,7 @@ class Tensor(object):
 
     @property
     def grad(self):
-        g = from_dragon(self.name + '_grad', False)
+        g = _from_dragon(self.name + '_grad', False)
         if g: g._static_shape = self.shape
         return g
 
@@ -1512,7 +1640,7 @@ class Tensor(object):
     ##############################################
 
     def _type2str(self):
-        return mapping.TENSOR_TYPE_TO_TORCH_TENSOR[self.dtype]
+        return _mapping.TENSOR_TYPE_TO_TORCH_TENSOR[self.dtype]
 
 
 def CharTensor(*args, **kwargs):
@@ -1556,7 +1684,7 @@ def _LeafTensor(shape, dtype='float32', device=_Device(), requires_grad=False):
     Commonly used to create leaf variables, i.e., the parameters or placeholders.
 
     """
-    constructor = globals()[mapping.TENSOR_TYPE_TO_TORCH_TENSOR[dtype]]
+    constructor = globals()[_mapping.TENSOR_TYPE_TO_TORCH_TENSOR[dtype]]
     return constructor(*shape, device=device, requires_grad=requires_grad)
 
 
@@ -1567,7 +1695,7 @@ def _RuntimeTensor(name, dtype='float32', device=_Device()):
     i.e., the shape is computed by the backend automatically.
 
     """
-    constructor = globals()[mapping.TENSOR_TYPE_TO_TORCH_TENSOR[dtype]]
+    constructor = globals()[_mapping.TENSOR_TYPE_TO_TORCH_TENSOR[dtype]]
     return constructor(name=name, device=device)
 
 
@@ -1578,8 +1706,8 @@ def _ReferenceTensor(src):
     i.e., view, squeeze, and unsqueeze.
 
     """
-    constructor = globals()[mapping.TENSOR_TYPE_TO_TORCH_TENSOR[src.dtype]]
-    T = constructor(name=TensorPool.get('${REFERENCE}'), device=src.device)
+    constructor = globals()[_mapping.TENSOR_TYPE_TO_TORCH_TENSOR[src.dtype]]
+    T = constructor(name=_get_tensor_pool().get('${REFERENCE}'), device=src.device)
     T._ref_objects.append(src)
     return T
 
@@ -1594,3 +1722,27 @@ class Parameter(Tensor):
     def __repr__(self):
         return 'Parameter containing:\n' + \
             super(Parameter, self).__repr__()
+
+
+def tensor(data, dtype=None, device=None, requires_grad=False, pin_memory=False):
+    """Construct a tensor with data.
+
+    Parameters
+    ----------
+    data : array_like
+        The data to initialize.
+    dtype : str, optional
+        The optional data type.
+    device : dragon.vm.torch.device, optional
+        The optional device option.
+    requires_grad : boolean, optional, default=False
+        Whether to enable auto-grad.
+    pin_memory : boolean, optional, default=False
+        Whether to allocate pin-memory for cpu tensor.
+
+    """
+    data = numpy.array(data)
+    if dtype is None: dtype = str(data.dtype)
+    else: data = data.astype(dtype)
+    if device is None: device = _Device()
+    return Tensor(data, dtype=dtype, device=device, requires_grad=requires_grad)

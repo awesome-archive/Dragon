@@ -14,11 +14,10 @@ from __future__ import division
 from __future__ import print_function
 
 import time
-import pprint
-from multiprocessing import Queue
 
-import dragon.core.mpi as mpi
-import dragon.core.logging as logging
+from multiprocessing import Queue
+from dragon.core import mpi as _mpi
+from dragon.core import logging as _logging
 
 from .data_reader import DataReader
 from .data_transformer import DataTransformer
@@ -40,20 +39,18 @@ class DataBatch(object):
         ----------
         source : str
             The path of database.
-        multiple_nodes: boolean, optional, default=False
-            Whether to split data for multiple parallel nodes.
         shuffle : bool, optional, default=False
             Whether to shuffle the data.
         num_chunks : int, optional, default=2048
             The number of chunks to split.
-        chunk_size : int, optional, default=-1
-            The size(MB) of each chunk.
         padding : int, optional, default=0
             The zero-padding size.
-        fill_value : int, optional, default=127
-            The value to fill when padding is valid.
+        fill_value : int or sequence, optional, default=127
+            The value(s) to fill for padding or cutout.
         crop_size : int, optional, default=0
             The cropping size.
+        cutout_size : int, optional, default=0
+            The square size to cutout.
         mirror : bool, optional, default=False
             Whether to mirror(flip horizontally) images.
         color_augmentation : bool, optional, default=False
@@ -76,12 +73,12 @@ class DataBatch(object):
         """
         super(DataBatch, self).__init__()
         # Init mpi
-        global_rank = 0; local_rank = 0; group_size = 1
-        if mpi.Is_Init():
-            idx, group = mpi.AllowParallel()
-            if idx != -1:  # DataParallel
-                global_rank = mpi.Rank()
-                group_size = len(group)
+        global_rank, local_rank, group_size = 0, 0, 1
+        if _mpi.Is_Init() and kwargs.get(
+                'phase', 'TRAIN') == 'TRAIN':
+            rank, group = _mpi.AllowParallel()
+            if rank != -1: # DataParallel
+                global_rank, group_size = _mpi.Rank(), len(group)
                 for i, node in enumerate(group):
                     if global_rank == node: local_rank = i
         kwargs['group_size'] = group_size
@@ -105,38 +102,33 @@ class DataBatch(object):
                     self._num_transformers += 1
             # Add 1 transformer for random crop
             if kwargs.get('crop_size', 0) > 0 and \
-                kwargs.get('phase', 'TEST') == 'TRAIN':
+                kwargs.get('phase', 'TRAIN') == 'TRAIN':
                     self._num_transformers += 1
-        self._num_transformers = min(self._num_transformers, self._max_transformers)
+        self._num_transformers = min(
+            self._num_transformers, self._max_transformers)
 
         self._batch_size = kwargs.get('batch_size', 128)
         self._partition = kwargs.get('partition', False)
-        if self._partition:
-            self._batch_size = int(self._batch_size / kwargs['group_size'])
+        if self._partition: self._batch_size //= kwargs['group_size']
 
         # Init queues
-        self.Q_level_1 = Queue(self._prefetch * self._num_readers * self._batch_size)
-        self.Q_level_2 = Queue(self._prefetch * self._num_readers * self._batch_size)
-        self.Q_level_3 = Queue(self._prefetch * self._num_readers)
+        self.Q1 = Queue(self._prefetch * self._num_readers * self._batch_size)
+        self.Q2 = Queue(self._prefetch * self._num_readers * self._batch_size)
+        self.Q3 = Queue(self._prefetch * self._num_readers)
 
         # Init readers
         self._readers = []
         for i in range(self._num_readers):
             self._readers.append(DataReader(**kwargs))
-            self._readers[-1].Q_out = self.Q_level_1
+            self._readers[-1].Q_out = self.Q1
 
         for i in range(self._num_readers):
-            num_parts = self._num_readers
-            part_idx = i
-
-            if self._readers[i]._multiple_nodes or \
-                    self._readers[i]._use_shuffle:
-                num_parts *= group_size
-                part_idx += local_rank * self._num_readers
-
+            part_idx, num_parts = i, self._num_readers
+            num_parts *= group_size
+            part_idx += local_rank * self._num_readers
             self._readers[i]._num_parts = num_parts
             self._readers[i]._part_idx = part_idx
-            self._readers[i]._random_seed += part_idx
+            self._readers[i]._rng_seed += part_idx
             self._readers[i].start()
             time.sleep(0.1)
 
@@ -144,9 +136,8 @@ class DataBatch(object):
         self._transformers = []
         for i in range(self._num_transformers):
             transformer = DataTransformer(**kwargs)
-            transformer._random_seed += (i + local_rank * self._num_transformers)
-            transformer.Q_in = self.Q_level_1
-            transformer.Q_out = self.Q_level_2
+            transformer._rng_seed += (i + local_rank * self._num_transformers)
+            transformer.Q_in, transformer.Q_out = self.Q1, self.Q2
             transformer.start()
             self._transformers.append(transformer)
             time.sleep(0.1)
@@ -155,8 +146,7 @@ class DataBatch(object):
         self._fetchers = []
         for i in range(self._num_fetchers):
             fetcher = BlobFetcher(**kwargs)
-            fetcher.Q_in = self.Q_level_2
-            fetcher.Q_out = self.Q_level_3
+            fetcher.Q_in, fetcher.Q_out = self.Q2, self.Q3
             fetcher.start()
             self._fetchers.append(fetcher)
             time.sleep(0.1)
@@ -167,11 +157,11 @@ class DataBatch(object):
                     process.terminate()
                     process.join()
             terminate(self._fetchers)
-            if local_rank == 0: logging.info('Terminating BlobFetcher ......')
+            if local_rank == 0: _logging.info('Terminate BlobFetcher.')
             terminate(self._transformers)
-            if local_rank == 0: logging.info('Terminating DataTransformer ......')
+            if local_rank == 0: _logging.info('Terminate DataTransformer.')
             terminate(self._readers)
-            if local_rank == 0: logging.info('Terminating DataReader......')
+            if local_rank == 0: _logging.info('Terminate DataReader.')
         import atexit
         atexit.register(cleanup)
 
@@ -184,4 +174,4 @@ class DataBatch(object):
             The batch, representing data and labels respectively.
 
         """
-        return self.Q_level_3.get()
+        return self.Q3.get()

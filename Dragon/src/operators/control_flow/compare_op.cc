@@ -1,82 +1,121 @@
 #include "core/workspace.h"
 #include "utils/op_kernel.h"
+#include "utils/math_utils.h"
 #include "utils/math_functions.h"
 #include "operators/control_flow/compare_op.h"
 
 namespace dragon {
 
-using kernel::Equal;
-using kernel::Less;
-using kernel::Greater;
+template <class Context> template <typename T>
+void CompareOp<Context>::RunImpl() {
+    const T* a = nullptr, * b = nullptr;
 
-#define ELIGIBLE_DATA_TYPES \
-    { "bool", "int8", "uint8", "int32", "int64", \
-      "float16", "float32", "float64" }
-
-#define DEFINE_TYPED_CALLER(Operation) \
-    if (XIsType(Input(0), bool)) Operation##RunWithType<bool>(); \
-    else if (XIsType(Input(0), int8_t)) Operation##RunWithType<int8_t>(); \
-    else if (XIsType(Input(0), uint8_t)) Operation##RunWithType<uint8_t>(); \
-    else if (XIsType(Input(0), int)) Operation##RunWithType<int>(); \
-    else if (XIsType(Input(0), int64_t)) Operation##RunWithType<int64_t>(); \
-    else if (XIsType(Input(0), float16)) Operation##RunWithType<float16>(); \
-    else if (XIsType(Input(0), float)) Operation##RunWithType<float>(); \
-    else if (XIsType(Input(0), double)) Operation##RunWithType<double>(); \
-    else LOG(FATAL) << DTypeHelper(Input(0), ELIGIBLE_DATA_TYPES)
-
-#define DEFINE_OP_CALLER(Operation) \
-    template <class Context> template <typename T> \
-    void CompareOp<Context>::Operation##RunWithType() { \
-        auto* Adata = Input(0).template data<T, Context>(); \
-        const T* Bdata = nullptr; \
-        auto* Ydata = Output(0)->template mutable_data<bool, Context>(); \
-        if (Input(1).count() == 1) { \
-            auto* WSdata = ws()->template caches<T, Context> \
-                    ({ Input(0).count() })[0]; \
-            auto* BCdata = Input(1).template data<T, CPUContext>(); \
-            math::Set(Input(0).count(), BCdata[0], WSdata, ctx()); \
-            Bdata = WSdata; \
-        } else { Bdata = Input(1).template data<T, Context>(); } \
-        kernel::Operation(Output(0)->count(), Adata, Bdata, Ydata, ctx()); \
+    if (X(0).count() < X(1).count()) {
+        int rows, cols;
+        Y(0)->ReshapeLike(X(1));
+        a = ws()
+            ->template data<T, Context>
+                ({ X(1).count() })[0];
+        b = X(1).template data<T, Context>();
+        auto* ra = X(0).template data<T, Context>();
+        if (utils::IsRowwiseBroadcast(
+                X(0).dims(), X(1).dims(),
+                    &rows, &cols)) {
+            math::BroadcastSet(
+                rows, cols, 0, ra,
+                const_cast<T*>(a), ctx()
+            );
+        } else if (utils::IsColwiseBroadcast(
+                X(0).dims(), X(1).dims(),
+                    &rows, &cols)) {
+            math::BroadcastSet(
+                rows, cols, 1, ra,
+                const_cast<T*>(a), ctx()
+            );
+        } else {
+            LOG(FATAL)
+                << "Could not broadcast "
+                << X(0).DimString()
+                << " to "
+                << X(1).DimString();
+        }
+    } else if (X(0).count() > X(1).count()) {
+        int rows, cols;
+        Y(0)->ReshapeLike(X(0));
+        b = ws()
+            ->template data<T, Context>
+                ({ X(0).count() })[0];
+        a = X(0).template data<T, Context>();
+        auto* rb = X(1).template data<T, Context>();
+        if (utils::IsRowwiseBroadcast(
+                X(0).dims(), X(1).dims(),
+                    &rows, &cols)) {
+            math::BroadcastSet(
+                rows, cols, 0, rb,
+                const_cast<T*>(b), ctx()
+            );
+        } else if (utils::IsColwiseBroadcast(
+                X(0).dims(), X(1).dims(),
+                    &rows, &cols)) {
+            math::BroadcastSet(
+                rows, cols, 1, rb,
+                const_cast<T*>(b), ctx()
+            );
+        } else {
+            LOG(FATAL)
+                << "Could not broadcast "
+                << X(1).DimString()
+                << " to "
+                << X(0).DimString();
+        }
+    } else {
+        Y(0)->ReshapeLike(X(0));
+        a = X(0).template data<T, Context>();
+        b = X(1).template data<T, Context>();
     }
+
+    auto* y = Y(0)->template mutable_data<bool, Context>();
+
+    if (op_str_ == "EQ") {
+        kernel::Equal(Y(0)->count(), a, b, y, ctx());
+    } else if (op_str_ == "NE") {
+        kernel::NotEqual(Y(0)->count(), a, b, y, ctx());
+    } else if (op_str_ == "LT") {
+        kernel::Less(Y(0)->count(), a, b, y, ctx());
+    } else if (op_str_ == "GT") {
+        kernel::Greater(Y(0)->count(), a, b, y, ctx());
+    } else if (op_str_ == "LE") {
+        kernel::LessEqual(Y(0)->count(), a, b, y, ctx());
+    } else if (op_str_ == "GE") {
+        kernel::GreaterEqual(Y(0)->count(), a, b, y, ctx());
+    } else {
+        LOG(FATAL) << "Unknown Operation: " << op_str_;
+    }
+}
 
 template <class Context>
 void CompareOp<Context>::RunOnDevice() {
-    if (Input(0).count() != Input(1).count()) {
-        CHECK_EQ(Input(1).count(), 1)
-            << "\nBoth A and B should have the same number of elements."
-            << "\nOr the B should be a Scalar."
-            << "\nDimensions of A and B are " << Input(0).DimString()
-            << " and " << Input(1).DimString();
+    DispatchHelper<TensorTypes
+        <bool, int8_t, uint8_t, int, int64_t,
+               float16, float, double>
+    >::Call(this, X(0));
+
+    if (to_uint8_) {
+        Y(0)->SetMeta(TypeStringToMeta("uint8"));
     }
-
-    Output(0)->ReshapeLike(Input(0));
-
-    if (operation == "EQ") { DEFINE_TYPED_CALLER(Equal); }
-    else if (operation == "LT") { DEFINE_TYPED_CALLER(Less); }
-    else if (operation == "GT") { DEFINE_TYPED_CALLER(Greater); }
-    else if (operation == "LE") { DEFINE_TYPED_CALLER(LessEqual); }
-    else if (operation == "GE") { DEFINE_TYPED_CALLER(GreaterEqual); }
-    else { LOG(FATAL) << "Unsupport operation: " << operation << "."; }
-    if (to_uint8) Output(0)->SetMeta(TypeMeta::Make<uint8_t>());
 }
-
-DEFINE_OP_CALLER(Equal);
-DEFINE_OP_CALLER(Less);
-DEFINE_OP_CALLER(LessEqual);
-DEFINE_OP_CALLER(Greater);
-DEFINE_OP_CALLER(GreaterEqual);
 
 DEPLOY_CPU(Compare);
 #ifdef WITH_CUDA
 DEPLOY_CUDA(Compare);
 #endif
-OPERATOR_SCHEMA(Compare).NumInputs(2).NumOutputs(1);
+
+OPERATOR_SCHEMA(Compare)
+     /* A, B */
+    .NumInputs(2)
+     /* Y */
+    .NumOutputs(1);
 
 NO_GRADIENT(Compare);
-
-#undef ELIGIBLE_DATA_TYPES
-#undef DEFINE_OP_CALLLER
-#undef DEFINE_TYPED_CALLER
 
 }  // namespace dragon

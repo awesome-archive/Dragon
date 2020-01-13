@@ -7,61 +7,64 @@ namespace dragon {
 
 namespace kernel {
 
-/*! BiasAdd <T = float32, Device = CUDA> */
+/* <T = float32, Device = CUDA> */
 
 template <typename T>
-__global__ void _BiasAdd_NCHW(
-    const int               count,
-    const int               dim,
+__global__ void _BiasAddNCHW(
+    const int               nthreads,
+    const int               axis_dim,
     const int               inner_dim,
     const T*                bias,
     T*                      y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
 #if __CUDA_ARCH__ >= 350
-        y[idx] += __ldg(bias + ((idx / inner_dim) % dim));
+        y[i] += __ldg(bias + ((i / inner_dim) % axis_dim));
 #else
-        y[idx] += bias[(idx / inner_dim) % dim];
+        y[i] += bias[(i / inner_dim) % axis_dim];
 #endif
     }
 }
 
 template <typename T>
-__global__ void _BiasAdd_NHWC(
-    const int               count,
-    const int               dim,
-    const int               inner_dim,
+__global__ void _BiasAddNHWC(
+    const int               nthreads,
+    const int               axis_dim,
     const T*                bias,
     T*                      y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
 #if __CUDA_ARCH__ >= 350
-        y[idx] += __ldg(bias + (idx % dim));
+        y[i] += __ldg(bias + (i % axis_dim));
 #else
-        y[idx] += bias[idx % dim];
+        y[i] += bias[i % axis_dim];
 #endif
     }
 }
 
 template<> void BiasAdd<float, CUDAContext>(
-    const int               count,
     const int               outer_dim,
-    const int               dim,
+    const int               axis_dim,
     const int               inner_dim,
     const string&           data_format,
     const float*            bias,
-    const float*            bias_multiplier,
+    const float*            multiplier,
     float*                  y,
     CUDAContext*            ctx) {
+    auto nthreads = outer_dim * axis_dim * inner_dim;
     if (data_format == "NCHW") {
-        _BiasAdd_NCHW<float>
-            << < CUDA_BLOCKS(count), CUDA_THREADS,
-                 0, ctx->cuda_stream() >> >
-            (count, dim, inner_dim, bias, y);
+        _BiasAddNCHW
+            <<< CUDA_BLOCKS(nthreads), CUDA_THREADS,
+                0, ctx->cuda_stream() >>>(
+            nthreads, axis_dim, inner_dim, bias, y
+        );
     } else if (data_format == "NHWC") {
-        _BiasAdd_NHWC<float>
-            << < CUDA_BLOCKS(count), CUDA_THREADS,
-                 0, ctx->cuda_stream() >> >
-            (count, dim, inner_dim, bias, y);
-    } else LOG(FATAL) << "Unknown data format: " << data_format;
+        _BiasAddNHWC
+            <<< CUDA_BLOCKS(nthreads), CUDA_THREADS,
+                0, ctx->cuda_stream() >>>(
+            nthreads, axis_dim, bias, y
+        );
+    } else {
+        LOG(FATAL) << "Unknown DataFormat: " << data_format;
+    }
 }
 
 }  // namespace kernel

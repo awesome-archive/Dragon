@@ -15,8 +15,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import dragon.import_c_api as C
-import dragon.core.logging as logging
+from dragon import import_c_api as _C
+from dragon.core import logging as _logging
+
 
 option = {}
 
@@ -97,7 +98,7 @@ def EnableCNML(mlu_id=0):
 
     Parameters
     ----------
-    device_id : int
+    mlu_id : int
         The index of MLU to use.
 
     Returns
@@ -192,14 +193,14 @@ def SetGraphOptimizationLevel(level=3):
 
     We have predefined four levels:
 
-    -O0(level=0): Do nothing.
+    *-O0*: Do nothing.
 
-    -O1(level=1): Prune the redundant nodes.
+    *-O1*: Prune the redundant nodes.
 
-    -O2(level=2): Add the inplace to outputs.
+    *-O2*: Add the inplace to outputs.
     Note that the graph will no longer be a DAG.
 
-    -O3(level=3): Allocate the buffer for outputs.
+    *-O3*: Allocate the buffer for outputs.
     This level is memory-efficient while debugging will be non-trivial.
 
     Parameters
@@ -290,12 +291,12 @@ def SetLoggingLevel(level):
     The default level is *INFO*.
 
     """
-    C.SetLoggingLevel(level)
-    logging.set_verbosity({
-        'DEBUG': logging.DEBUG,
-        'INFO': logging.INFO,
-        'WARNING': logging.WARN,
-        'ERROR': logging.ERROR,
-        'FATAL': logging.FATAL,
+    _C.SetLoggingLevel(level)
+    _logging.set_verbosity({
+        'DEBUG': _logging.DEBUG,
+        'INFO': _logging.INFO,
+        'WARNING': _logging.WARN,
+        'ERROR': _logging.ERROR,
+        'FATAL': _logging.FATAL,
         }[level]
     )

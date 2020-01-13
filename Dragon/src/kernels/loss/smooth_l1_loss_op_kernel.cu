@@ -7,19 +7,22 @@ namespace dragon {
 
 namespace kernel {
 
-/*! SmoothL1 <T = float32, Device = CUDA> */
+/* <T = float32, Device = CUDA> */
 
 template <typename T>
 __global__ void _SmoothL1(
-    const int               count,
+    const int               nthreads,
     const float             beta,
     const T*                x,
     T*                      y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        const T val = x[idx];
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        const T val = x[i];
         const T abs_val = abs(val);
-        if (abs_val < beta) y[idx] = 0.5 * val * val / beta;
-        else y[idx] = abs_val - 0.5 * beta;
+        if (abs_val < beta) {
+            y[i] = T(0.5) * val * val / beta;
+        } else {
+            y[i] = abs_val - T(0.5) * beta;
+        }
     }
 }
 
@@ -29,26 +32,27 @@ template<> void SmoothL1<float, CUDAContext>(
     const float*            x,
     float*                  y,
     CUDAContext*            ctx) {
-    _SmoothL1<float>
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, beta, x, y);
+    _SmoothL1
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count, beta, x, y
+     );
 }
 
-/*! SmoothL1Grad <T = float32, Device = CUDA> */
+/* <T = float32, Device = CUDA> */
 
 template <typename T>
 __global__ void _SmoothL1Grad(
-    const int               count,
+    const int               nthreads,
     const float             beta,
     const T*                dy,
     T*                      dx) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        const T val = dy[idx];
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        const T val = dy[i];
         const T abs_val = abs(val);
-        if (abs_val < beta) dx[idx] = val / beta;
+        if (abs_val < beta) dx[i] = val / beta;
         //  val > 0: 1 | val == 0: 0 | val < 0: -1
-        else dx[idx] = (val > T(0)) - (val < T(0));
+        else dx[i] = (val > T(0)) - (val < T(0));
     }
 }
 
@@ -58,10 +62,11 @@ template<> void SmoothL1Grad<float, CUDAContext>(
     const float*            dy,
     float*                  dx,
     CUDAContext*            ctx) {
-    _SmoothL1Grad<float>
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, beta, dy, dx);
+    _SmoothL1Grad
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count, beta, dy, dx
+    );
 }
 
 }  // namespace kernel

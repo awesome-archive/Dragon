@@ -38,6 +38,7 @@ class GradientMakerBase {
         const vector<string>&       g_outputs)
         : def(def), g_outputs_(g_outputs),
           g_inputs_(def.input_size()) {}
+
     virtual ~GradientMakerBase() {}
 
     virtual bool CopyDeviceOption() const { return true; }
@@ -45,27 +46,27 @@ class GradientMakerBase {
     virtual bool CopyArguments() const { return true; }
 
     virtual Gradient Make() {
-        vector<OperatorDef> new_defs = MakeDefs();
+        auto new_defs = MakeDef();
         if (def.has_uid()) {
-            // Attach the anchor to the name if having UID
+            // Attach the handle to name if having UID
             for (int i = 0; i < new_defs.size(); i++)
                 new_defs[i].set_name(def.name());
         } else {
             // Otherwise, just put it into the arguments
-            Argument anchor;
-            anchor.set_name("anchor"); anchor.set_s(def.name());
+            Argument arg;
+            arg.set_name("handle");
+            arg.set_s(def.name());
             for (int i = 0; i < new_defs.size(); i++)
-                new_defs[i].add_arg()->CopyFrom(anchor);
+                new_defs[i].add_arg()->CopyFrom(arg);
         }
-        return Gradient(new_defs, g_inputs_, DefaultValues());
+        return Gradient(new_defs, g_inputs_, defaults());
     };
 
-    virtual vector<OperatorDef> MakeDefs() {
-        NOT_IMPLEMENTED;
+    virtual vector<OperatorDef> MakeDef() {
         return vector<OperatorDef>();
     }
 
-    virtual vector<float> DefaultValues() {
+    virtual vector<float> defaults() {
         return vector<float>(g_outputs_.size(), 1.f);
     }
 
@@ -106,17 +107,20 @@ Gradient MakeGradientForOp(
     const OperatorDef&              op_def,
     const vector<string>&           g_outputs);
 
-# define GRADIENT_MAKER_CTOR(name) \
-    name(const OperatorDef& def, const vector<string>& g_output) \
+#define GRADIENT_MAKER_CTOR(name) \
+    name(const OperatorDef& def, \
+         const vector<string>& g_output) \
         : GradientMakerBase(def, g_output) {}
 
 class NoGradient : public GradientMakerBase {
  public:
     GRADIENT_MAKER_CTOR(NoGradient);
-    vector<OperatorDef> MakeDefs() override {
+    vector<OperatorDef> MakeDef() override {
         return vector<OperatorDef>();
     }
 };
+
+namespace {
 
 // Here we define some common gradient makers
 // Reuse them to make the codes cleaner
@@ -131,17 +135,19 @@ class SimpleGradientMaker final : public GradientMakerBase {
      *
      */
     GRADIENT_MAKER_CTOR(SimpleGradientMaker);
-    vector<OperatorDef> MakeDefs() override {
+    vector<OperatorDef> MakeDef() override {
         vector<string> inputs, outputs;
-        for (const auto& input : def.input()) {
+        for (const auto& input : def.input())
             inputs.push_back(input);
-        }
-        inputs.push_back(GO(0));
-        for (int i = 0; i < def.input_size(); i++) {
+        for (int i = 0; i < def.input_size(); ++i)
             outputs.push_back(GI(i));
-        }
-        return SingleDef(def.type() +
-            "Gradient", "", inputs, outputs);
+        inputs.push_back(GO(0));
+        return SingleDef(
+            def.type() + "Gradient",
+            "",
+            inputs,
+            outputs
+        );
     }
 };
 
@@ -155,26 +161,31 @@ class InplaceGradientMaker final : public GradientMakerBase {
      *
      */
     GRADIENT_MAKER_CTOR(InplaceGradientMaker);
-    vector<OperatorDef> MakeDefs() override {
+    vector<OperatorDef> MakeDef() override {
         return SingleDef(
             def.type() + "Gradient",          /*!   OpType   */
             "",                               /*!   OpName   */
             vector<string>({ O(0), GO(0) }),  /*!   Inputs   */
-            vector<string>({ GI(0) }));       /*!   Outputs  */
+            vector<string>({ GI(0) })         /*!   Outputs  */
+        );
     }
 };
+
+}  // namespace
 
 DECLARE_REGISTRY(
     GradientRegistry,
     GradientMakerBase,
     const OperatorDef&,
-    const vector<string>&);
+    const vector<string>&
+);
 
 DECLARE_REGISTRY(
     NoGradientRegistry,
     GradientMakerBase,
     const OperatorDef&,
-    const vector<string>&);
+    const vector<string>&
+);
 
 // Defined in the operator.cc
 #define REGISTER_GRADIENT(name, ...) \

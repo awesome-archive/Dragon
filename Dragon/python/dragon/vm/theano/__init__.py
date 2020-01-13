@@ -9,9 +9,11 @@
 #
 # ------------------------------------------------------------
 
-from .compile import (
-    function,
-    scan,
-    shared)
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
-from .configdefaults import config
+from dragon.vm.theano import tensor
+from dragon.vm.theano.compile import shared
+from dragon.vm.theano.compile import function
+from dragon.vm.theano.configdefaults import config

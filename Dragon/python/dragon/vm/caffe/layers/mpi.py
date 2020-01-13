@@ -15,12 +15,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import dragon
-from ..layer import Layer
+from dragon import ops as _ops
+from ..layer import Layer as _Layer
 
 
-class MPIBroadcastLayer(Layer):
-    """The implementation of ``MPIBroadcastLayer``.
+class MPIBroadcastLayer(_Layer):
+    """The implementation of *MPIBroadcastLayer*.
 
     Parameters
     ----------
@@ -33,11 +33,11 @@ class MPIBroadcastLayer(Layer):
         self.arguments = {'root': LayerParameter.mpi_param.root}
 
     def LayerSetup(self, bottom):
-        return dragon.ops.MPIBroadcast(bottom, **self.arguments)
+        return _ops.MPIBroadcast(bottom, **self.arguments)
 
 
-class MPIGatherLayer(Layer):
-    """The implementation of ``MPIGatherLayer``.
+class MPIGatherLayer(_Layer):
+    """The implementation of *MPIGatherLayer*.
 
     Parameters
     ----------
@@ -53,4 +53,4 @@ class MPIGatherLayer(Layer):
         }
 
     def LayerSetup(self, bottom):
-        return dragon.ops.MPIGather(bottom, **self.arguments)
+        return _ops.MPIGather(bottom, **self.arguments)

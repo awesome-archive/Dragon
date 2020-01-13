@@ -13,44 +13,45 @@
 #ifndef DRAGON_CORE_WORKSPACE_H_
 #define DRAGON_CORE_WORKSPACE_H_
 
-#include "core/common.h"
 #include "core/graph.h"
-#include "utils/string.h"
 
 namespace dragon {
 
 class Workspace {
  public:
-    typedef Map<string, Map<string, int64_t> > DummyNameMap;
-
-    typedef Map<string, unique_ptr<Tensor> > TensorMap;
+    typedef Map<string, Map<string, int64_t>> DummyNameMap;
+    typedef Map<string, unique_ptr<Tensor>> TensorMap;
     typedef Map<string, string> TensorAliasMap;
     typedef Map<string, TensorFillerProto> TensorFillerMap;
-
-    typedef Map<string, unique_ptr<OperatorBase> > OperatorMap;
-    typedef Map<string, unique_ptr<GraphBase> > GraphMap;
-    typedef Map<string, Workspace*> WorkspaceMap;
+    typedef Map<string, unique_ptr<OperatorBase>> OperatorMap;
+    typedef Map<string, unique_ptr<GraphBase>> GraphMap;
 
     /*! \brief Constructor */
-    Workspace(const string& name) : name_(name) { InitWorkspace(); }
+    Workspace(const string& name) : name_(name) { Initialize(); }
 
     /*! \brief Return the name of this workspace */
     const string& name() { return name_; }
 
-    /*! \brief Create some internal tensors */
-    void InitWorkspace();
+    /*! \brief Return the name of stored tensors */
+    vector<string> tensors() const;
 
-    /*! \brief Move a external workspace into this workspace */
-    Workspace* Move(Workspace* ws);
+    /*! \brief Return the name of stored graphs */
+    vector<string> graphs() const;
+
+    /*! \brief Create some internal tensors */
+    void Initialize();
 
     /*! \brief Destory all the tensors */
     void Clear();
 
+    /*! \brief Merge from a external workspace */
+    void MergeFrom(Workspace*);
+
     /*! \brief Query the real name of specified tensor */
-    string GetTensorName(const string& name) const;
+    string GetTensorName(const string&) const;
 
     /*! \brief Try to serach the specified tensor in this workspace */
-    Tensor* TryGetTensor(const string& name, bool use_remote = true) const;
+    Tensor* TryGetTensor(const string&, bool = true) const;
 
     /*! \brief Whether the specified tensor is in this workspace */
     bool HasTensor(const string& name, bool use_remote = true) const {
@@ -58,64 +59,60 @@ class Workspace {
     }
 
     /*! \brief Create the specified tensor */
-    Tensor* CreateTensor(const string& name);
+    Tensor* CreateTensor(const string&);
 
     /*! \brief Return the specified tensor */
-    Tensor* GetTensor(const string& name, bool use_remote = true) const;
+    Tensor* GetTensor(const string&, bool = true) const;
 
     /*! \brief Reset the specified tensor */
-    void ResetTensor(const string& name);
-
-    /*! \brief Return all the stored tensor names */
-    vector<string> GetTensors() const;
+    void ResetTensor(const string&);
 
     /* \brief Whether the specified filler is in this workspace */
-    bool HasFiller(const string& name, bool use_remote = true) const;
+    bool HasFiller(const string&, bool = true) const;
 
     /*! \brief Create the specified filler */
-    void CreateFiller(const TensorFillerProto filler);
+    void CreateFiller(const TensorFillerProto&);
 
     /*! \brief Return the specified filler */
-    const TensorFillerProto* GetFiller(const string& name) const;
+    const TensorFillerProto* GetFiller(const string&) const;
 
-    /*! \brief Create temporal cache segments */
+    /*! \brief Create temporal data segments */
     template <class Context>
-    vector<void*> caches(const vector<size_t>& segments) {
+    vector<void*> data(const vector<size_t>& segments) {
         int64_t nbytes = 0;
+        vector<void*> ret(segments.size());
         for (auto& segment : segments) nbytes += (int64_t)segment;
-        Tensor* cache_t = CreateTensor("/share/cache");
-        cache_t->Reshape({ nbytes });
-        vector<void*> Bcaches(segments.size());
-        Bcaches[0] = cache_t->template mutable_data<uint8_t, Context>();
+        auto* T = CreateTensor("/share/data")->Reshape({ nbytes });
+        ret[0] = T->template mutable_data<uint8_t, Context>();
         for (int i = 1; i < segments.size(); i++)
-            Bcaches[i] = (uint8_t*)Bcaches[i - 1] + segments[i - 1];
-        return Bcaches;
+            ret[i] = (uint8_t*)ret[i - 1] + segments[i - 1];
+        return ret;
     }
 
     /*! \brief Create temporal cache segments with the specified type */
     template <typename T, class Context>
-    vector<T*> caches(const vector<int64_t>& segments) {
-        vector<size_t> Tsegments;
-        for (auto& segment : segments)
-            Tsegments.emplace_back(segment * sizeof(T));
-        vector<void*> Bcaches = caches<Context>(Tsegments);
-        vector<T*> Tcaches(segments.size());
+    vector<T*> data(const vector<int64_t>& segments) {
+        vector<size_t> segments_in_byte;
+        vector<T*> ret(segments.size());
+        for (const auto& e : segments)
+            segments_in_byte.emplace_back(e * sizeof(T));
+        auto ret_in_byte = data<Context>(segments_in_byte);
         for (int i = 0; i < segments.size(); i++)
-            Tcaches[i] = (T*)Bcaches[i];
-        return Tcaches;
+            ret[i] = (T*)ret_in_byte[i];
+        return ret;
     }
 
     /*! \brief Create a operator in this workspace */
-    OperatorBase* CreateOperator(const OperatorDef& def);
+    OperatorBase* CreateOperator(const OperatorDef&);
 
     /*! \brief Run the specified persistent operator */
-    void RunOperator(const OperatorDef& def);
+    void RunOperator(const OperatorDef&);
 
     /*! \brief Try to run the operator in a adaptive mode */
-    void RunOperatorOnce(const OperatorDef& def);
+    void RunOperatorOnce(const OperatorDef&);
 
     /*! \brief Create a Graph in this workspace */
-    GraphBase* CreateGraph(const GraphDef& def);
+    GraphBase* CreateGraph(const GraphDef&);
 
     /*! \brief Run the specifed graph by name and rules */
     void RunGraph(
@@ -123,9 +120,6 @@ class Workspace {
         const string&               include,
         const string&               exclude,
         int                         stream_id = 0);
-
-    /*! \brief Return all the stored graph names */
-    vector<string> GetGraphs() const;
 
     /* \brief Set an alias for the tensor */
     bool SetTensorAlias(const string& name, const string& alias);
@@ -160,7 +154,7 @@ class Workspace {
     GraphMap graph_map_;
 
     /*! \brief Store the remote workspaces */
-    WorkspaceMap workspace_map_;
+    vector<Workspace*> remote_workspaces_;
 };
 
 }  // namespace dragon

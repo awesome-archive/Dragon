@@ -18,8 +18,13 @@ from . import *
 
 @OpSchema.Inputs(5)
 def BatchNorm(
-    inputs, axis=-1, momentum=0.9, eps=1e-5,
-        use_stats=-1, **kwargs):
+    inputs,
+    axis=-1,
+    momentum=0.9,
+    eps=1e-5,
+    use_stats=-1,
+    **kwargs
+):
     """Batch Normalization. `[Ioffe & Szegedy, 2015] <https://arxiv.org/abs/1502.03167>`_.
 
     We enforce the number of inputs should be *5*, i.e.,
@@ -159,7 +164,7 @@ def InstanceNorm(inputs, axis=-1, eps=1e-5, **kwargs):
 def L2Norm(inputs, axis=0, num_axes=-1, eps=1e-5, mode='SUM', **kwargs):
     """L2 Normalization. `[Liu et.al, 2015] <https://arxiv.org/abs/1506.04579>`_.
 
-    **Type Constraints**: (*float16*, *float32*)
+    **Type Constraints**: (*float16*, *float32*, *float64*)
 
     Parameters
     ----------

@@ -7,29 +7,32 @@ namespace dragon {
 
 namespace kernel {
 
-/*! SoftmaxCrossEntropy <T = float32, Device = CUDA> */
+/* <T = float32, Device = CUDA> */
 
 template <typename T>
 __global__ void _SoftmaxCrossEntropy(
-    const int               count,
+    const int               nthreads,
     const T*                prob,
-    const T*                target,
-    T*                      loss) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        loss[idx] = -target[idx] * log(max(prob[idx], FLT_MIN));
+    const T*                targets,
+    T*                      losses) {
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        losses[i] = -targets[i] * log(
+            max(prob[i], FLT_MIN)
+        );
     }
 }
 
 template <> void SoftmaxCrossEntropy<float, CUDAContext>(
     const int               count,
     const float*            prob,
-    const float*            target,
-    float*                  loss,
+    const float*            targets,
+    float*                  losses,
     CUDAContext*            ctx) {
-    _SoftmaxCrossEntropy<float>
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, prob, target, loss);
+    _SoftmaxCrossEntropy
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count, prob, targets, losses
+    );
 }
 
 }  // namespace kernel

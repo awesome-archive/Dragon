@@ -17,6 +17,7 @@ List                              Brief
 `Tensor.dtype`_                   Return or Set the data type.
 `Tensor.set_value`_               Feed the values to C++ backend.
 `Tensor.get_value`_               Fetch the values from C++ backend.
+`Tensor.convert_to`_              Converts the given value to a Tensor.
 `Tensor.copy`_                    Return a Tensor with same content.
 `Tensor.reshape`_                 Reshape the dimensions of input.
 `Tensor.dimshuffle`_              Shuffle the dimensions.
@@ -63,7 +64,6 @@ List                              Brief
 `Tensor.__repr__`_                Return the information(name/shape).
 `Tensor.__getitem__`_             Return the value at the specific indices.
 `Tensor.__setitem__`_             Set the value at the specific indices.
-`Tensor.__call__`_                Return the expressions for displaying.
 ==============================    =============================================================================
 
 
@@ -94,7 +94,6 @@ API Reference
     .. automethod:: __repr__
     .. automethod:: __getitem__
     .. automethod:: __setitem__
-    .. automethod:: __call__
 
 .. _Tensor.Variable: #dragon.core.tensor.Tensor.Variable
 .. _Tensor.Placeholder: #dragon.core.tensor.Tensor.Placeholder
@@ -131,6 +130,7 @@ API Reference
 .. _Tensor.dtype: #dragon.core.tensor.Tensor.dtype
 .. _Tensor.set_value: #dragon.core.tensor.Tensor.set_value
 .. _Tensor.get_value: #dragon.core.tensor.Tensor.get_value
+.. _Tensor.convert_to: #dragon.core.tensor.Tensor.convert_to
 .. _Tensor.copy: #dragon.core.tensor.Tensor.copy
 .. _Tensor.reshape: #dragon.core.tensor.Tensor.reshape
 .. _Tensor.dimshuffle: #dragon.core.tensor.Tensor.dimshuffle

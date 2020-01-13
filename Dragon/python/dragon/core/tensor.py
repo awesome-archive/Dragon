@@ -22,14 +22,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import numpy as np
+import numpy
 
-import dragon.core.workspace as ws
-import dragon.proto.dragon_pb2 as pb
-
-from dragon.core.proto_utils import MakeOperatorDef, GetDefaultDeviceOption
-from dragon.core.scope import get_default_name_scope
-from dragon.core.helper import OperatorHelper, GradientHelper
+from dragon.core import scope as _scope
+from dragon.core import helper as _helper
+from dragon.core import workspace as _workspace
+from dragon.proto import dragon_pb2 as _proto_def
+from dragon.core import proto_utils as _proto_utils
 
 
 class Tensor(object):
@@ -59,7 +58,7 @@ class Tensor(object):
 
         """
         self.name, self.shape, self.dtype = name, shape, dtype
-        self.gradient = GradientHelper(self)
+        self.gradient = _helper.GradientHelper(self)
 
     ##############################################
     #                                            #
@@ -258,8 +257,8 @@ class Tensor(object):
     @name.setter
     def name(self, value):
         if value != '':
-            self._name = ws.GetDummyName(
-                get_default_name_scope() + value
+            self._name = _workspace.GetDummyName(
+                _scope.get_default_name_scope() + value
                     if value else 'Tensor', domain='Tensor')
         else:
             # Set it manually for same cases
@@ -463,7 +462,7 @@ class Tensor(object):
 
         Parameters
         ----------
-        item : int or slice
+        item : int, slice or Tensor
             The indices.
 
         Returns
@@ -472,26 +471,31 @@ class Tensor(object):
             The output tensor.
 
         """
-        starts, sizes = self._process_indices(item)
-        output = self.CreateOperator('Crop', self, starts=starts, sizes=sizes)
-        if self.shape is not None:
-            output_shape, squeeze_shape = self.shape[:], []
-            for ix in range(len(sizes)):
-                output_shape[ix] = sizes[ix]
-            for dim in output_shape:
-                if dim != -1: squeeze_shape.append(dim)
-            if len(squeeze_shape) == 0: output.shape = []
-            else: output.shape = squeeze_shape[:]
-        return output
+        if isinstance(item, Tensor):
+            return self.CreateOperator(
+                'MaskedSelect', [self, item],
+            )
+        else:
+            starts, sizes = self._process_indices(item)
+            output = self.CreateOperator('Crop', self, starts=starts, sizes=sizes)
+            if self.shape is not None:
+                output_shape, squeeze_shape = self.shape[:], []
+                for ix in range(len(sizes)):
+                    output_shape[ix] = sizes[ix]
+                for dim in output_shape:
+                    if dim != -1: squeeze_shape.append(dim)
+                if len(squeeze_shape) == 0: output.shape = []
+                else: output.shape = squeeze_shape[:]
+            return output
 
     def __setitem__(self, key, value):
         """Set the value at the specific indices.
 
         Parameters
         ----------
-        key : int or slice
+        key : int, slice or Tensor
             The indices.
-        value : Tensor, number or sequence
+        value : number, sequence or Tensor
             The value.
 
         Returns
@@ -499,26 +503,40 @@ class Tensor(object):
         None
 
         """
-        starts, sizes = self._process_indices(key)
         if not isinstance(value, Tensor):
-            value = self._from_constants(value)
-        return self.CreateOperator('Assign', [value],
-            existing_outputs=[self], starts=starts, sizes=sizes)
+            value = self._from_constant(value)
+        if isinstance(key, Tensor):
+            return self.CreateOperator(
+                'MaskedAssign', [value, key],
+                existing_outputs=[self],
+            )
+        else:
+            starts, sizes = self._process_indices(key)
+            return self.CreateOperator(
+                'Assign', [value],
+                starts=starts, sizes=sizes,
+                existing_outputs=[self],
+            )
 
-    def _from_constants(self, value):
-        if not isinstance(value, np.ndarray):
+    def _from_constant(self, value, name=None):
+        if not isinstance(value, numpy.ndarray):
             try:
-                value = np.array(value, dtype=self.dtype
-                    if self.dtype else 'float32')
+                value = numpy.array(
+                    value, dtype=self.dtype
+                        if self.dtype else 'float32')
             except:
                 raise TypeError(
                     'Can not convert the value to Tensor or numpy array.')
-        ref_tensor =  Tensor.Ref(
-            name=ws.GetDummyName('Constant',
-                domain='Tensor', zero_based=False),
-                    shape=list(value.shape), dtype=str(value.dtype))
-        ref_tensor.set_value(value)
-        return ref_tensor
+        return Tensor.Ref(
+            name=_workspace.GetDummyName(
+                basename=_scope.get_default_name_scope() +
+                         (name if name else 'Const'),
+                suffix=':0',
+                domain='Tensor'
+            ),
+            shape=list(value.shape),
+            dtype=str(value.dtype),
+        ).set_value(value)
 
     def __add__(self, other):
         """Calculate x + y.
@@ -535,7 +553,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Add', [self, other])
 
     def __radd__(self, other):
@@ -553,7 +571,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('RAdd', [other, self])
 
     def __sub__(self, other):
@@ -571,7 +589,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Sub', [self, other])
 
     def __rsub__(self, other):
@@ -589,7 +607,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('RSub', [other, self])
 
     def __mul__(self, other):
@@ -607,7 +625,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Mul', [self, other])
 
     def __rmul__(self, other):
@@ -625,7 +643,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('RMul', [other, self])
 
     def __div__(self, other):
@@ -643,7 +661,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Div', [self, other])
 
     __truediv__ = __div__
@@ -663,7 +681,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('RDiv', [other, self])
 
     __rtruediv__ = __rdiv__
@@ -694,7 +712,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Compare', [self, other], operation='GT')
 
     def __ge__(self, other):
@@ -712,7 +730,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Compare', [self, other], operation='GE')
 
     def __lt__(self, other):
@@ -730,7 +748,7 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Compare', [self, other], operation='LT')
 
     def __le__(self, other):
@@ -748,39 +766,11 @@ class Tensor(object):
 
         """
         if not isinstance(other, Tensor):
-            other = self._from_constants(other)
+            other = self._from_constant(other)
         return self.CreateOperator('Compare', [self, other], operation='LE')
-
-    def __eq__(self, other):
-        """Compute *self* == *other* element-wise.
-
-        Parameters
-        ----------
-        other : Tensor or number
-            The other tensor.
-
-        Returns
-        -------
-        Tensor
-            The output tensor.
-
-        """
-        if not isinstance(other, Tensor):
-            other = self._from_constants(other)
-        return self.CreateOperator('Compare', [self, other], operation='EQ')
 
     def __hash__(self):
         return id(self)
-
-    def __call__(self, *args, **kwargs):
-        """Print the expressions.
-
-        Returns
-        -------
-        None
-
-        """
-        return self.debug_expressions()
 
     ###############################################
     #                                             #
@@ -789,38 +779,40 @@ class Tensor(object):
     ###############################################
 
     def set_value(self, new_value, **kwargs):
-        """Feed the values to C++ backend. [**Theano Style**]
+        """Feed values to the backend.
 
         Parameters
         ----------
-        new_value : number, list or numpy.ndarray
+        new_value : array_like
             The values to set.
 
         Returns
         -------
-        None
+        Tensor
+            The self.
 
         See Also
         --------
         `workspace.FeedTensor(*args, **kwargs)`_ - How to feed a Tensor.
 
         """
-        ws.FeedTensor(self, new_value)
+        _workspace.FeedTensor(self, new_value)
+        return self
 
     def get_value(self):
-        """Fetch the values from C++ backend. [**Theano Style**]
+        """Copy values from the backend.
 
         Returns
         -------
-        numpy.ndarray or number
-            The values of this tensor in the backend.
+        numpy.ndarray
+            The copied values.
 
         See Also
         --------
         `workspace.FetchTensor(*args, **kwargs)`_ - How to fetch a Tensor.
 
         """
-        return ws.FetchTensor(self)
+        return _workspace.FetchTensor(self)
 
     def copy(self):
         """Return a Tensor with same content. [**Theano Style**]
@@ -835,12 +827,12 @@ class Tensor(object):
         `ops.Copy(*args, **kwargs)`_ - How to copy A to B.
 
         """
-        new_tensor = Tensor(self.name + '_copy')
+        new_tensor = Tensor.Ref(self.name + '_copy')
         arguments = {'inputs': self, 'existing_outputs': new_tensor}
         return self.CreateOperator('Copy', **arguments)
 
     def reshape(self, shape, **kwargs):
-        """Reshape the dimensions of input. [**Theano Style**]
+        """Reshape the dimensions of input.
 
         Parameters
         ----------
@@ -854,8 +846,7 @@ class Tensor(object):
 
         """
         if not isinstance(shape, (tuple, list)): shape = [shape]
-        return Tensor.CreateOperator(
-            'Reshape', inputs=self, shape=shape, **kwargs)
+        return self.CreateOperator('Reshape', inputs=self, shape=shape)
 
     def dimshuffle(self, *args, **kwargs):
         """Shuffle the dimensions. [**Theano Style**]
@@ -906,7 +897,7 @@ class Tensor(object):
 
             if self.shape is not None:
                 output.shape = input_shape[:]
-                output.shape.insert(axis, np.long(1))
+                output.shape.insert(axis, 1)
 
         return output
 
@@ -916,6 +907,27 @@ class Tensor(object):
     #                                                      #
     ########################################################
 
+    @classmethod
+    def convert_to(cls, value, dtype=None, name=None):
+        """Converts the given ``value`` to a ``Tensor``.
+
+        Parameters
+        ----------
+        value : number, sequence or numpy.ndarray
+            The value to convert.
+        dtype: str, optional
+            The optional data type.
+        name: str, optional
+            The optional name for this tensor.
+
+        Returns
+        -------
+        Tensor
+            The constant contains the value.
+
+        """
+        return Tensor.Ref('', dtype=dtype)._from_constant(value, name)
+
     def get_shape(self):
         """Construct the shape descriptor. [**TensorFlow Style**]
 
@@ -924,17 +936,8 @@ class Tensor(object):
         TensorShape
             The shape description.
 
-        Examples
-        --------
-        >>> a = Tensor(shape=[1, 2, 3, 4])
-        >>> print a.get_shape()
-        >>> TensorShape([Dimension(1), Dimension(2), Dimension(3), Dimension(4)])
-
-        >>> print a.get_shape().as_list()
-        >>> [1, 2, 3, 4]
-
         """
-        raise NotImplementedError('Implemented in <vm.tensorflow.framework.tensor_shape>')
+        raise NotImplementedError('')
 
     def eval(self, feed_dict=None):
         """Run and return the computing results of this tensor.
@@ -950,7 +953,7 @@ class Tensor(object):
             The values of this tensor in the backend.
 
         """
-        raise NotImplementedError('Try "import dragon.vm.tensorflow" to load this dynamic methods.')
+        raise NotImplementedError('')
 
     ############################################
     #                                          #
@@ -984,26 +987,32 @@ class Tensor(object):
         return ref_tensor
 
     @classmethod
-    def CreateOperator(cls, op_type, inputs,
-            num_outputs=1, existing_outputs=None,
-                extra_inputs=None, name=None, **kwargs):
+    def CreateOperator(
+        cls,
+        op_type,
+        inputs,
+        num_outputs=1,
+        existing_outputs=None,
+        extra_inputs=None,
+        name=None,
+        **kwargs
+    ):
         """Construct a new Tensor with specific operator descriptor.
 
         Parameters
         ----------
-        inputs : list of Tensor or Tensor
-            The inputs for this operator.
         op_type : str
-            The operator type.
-        num_outputs : int, optional
+            The type of operator.
+        inputs : sequence of Tensor
+            The inputs for this operator.
+        num_outputs : int, optional, default=1
             The number of outputs to return.
-            Discarded if ``existing_outputs`` is not None.
         existing_outputs : sequence of Tensor, optional
             The existing outputs for this operator.
         extra_inputs : sequence of Tensor, optional
-            The inputs that should be attached to solving targets, e.g. dynamic shape.
+            The inputs that should be attached to solving targets.
         name : str, optional
-            The optional name to use. ``Op_xxx`` will be used automatically if it is None.
+            The optional name.
 
         Returns
         -------
@@ -1032,7 +1041,7 @@ class Tensor(object):
         """
         expressions = dict()
 
-        # 1. Collect inputs
+        # 1) Collect inputs
         if not isinstance(inputs, list): inputs = [inputs]
         for input in inputs:
             for op_idx, expr in input.expressions.items():
@@ -1046,13 +1055,13 @@ class Tensor(object):
                     if not op_idx in expressions:
                         expressions[op_idx] = expr
 
-        # 2. Generate outputs
+        # 2) Generate outputs
         outputs = []
         if existing_outputs is None:
-            name_scope = get_default_name_scope()
+            name_scope = _scope.get_default_name_scope()
             for idx in range(num_outputs):
                 outputs.append(Tensor.Ref(
-                    ws.GetDummyName(name_scope +
+                    _workspace.GetDummyName(name_scope +
                         (name if name else op_type),
                             suffix=':{}'.format(idx),
                                 domain='Tensor')))
@@ -1063,20 +1072,19 @@ class Tensor(object):
             num_outputs = len(outputs)
             if not isinstance(outputs, list): outputs = [outputs]
 
-        # 3. Construct OperatorDef
+        # 3) Construct OperatorDef
         inputs_name = [input.name for input in inputs]
         outputs_name = [output.name for output in outputs]
-        op_idx, op_name = OperatorHelper.get_index_and_name()
+        op_idx, op_name = _helper.OperatorHelper.get_index_and_name()
+        device_option = _proto_utils.GetDefaultDeviceOption()
 
-        device_option = GetDefaultDeviceOption()
-
-        op_def = MakeOperatorDef(op_type,
+        op_def = _proto_utils.MakeOperatorDef(op_type,
             inputs_name, outputs_name, op_name,
                 device_option=device_option, **kwargs)
 
         expressions[op_idx] = op_def
 
-        # 4. Add outputs
+        # 4) Add outputs
         for idx, output in enumerate(outputs):
             # Deliver expressions
             output.expressions = expressions
@@ -1088,50 +1096,14 @@ class Tensor(object):
                 for input in extra_inputs:
                     output.extra_targets.add(input.name)
 
-        # 5. Refine the shape and data type
-        outputs = OperatorHelper.apply(op_type,
+        # 5) Refine the shape and data type
+        outputs = _helper.OperatorHelper.apply(op_type,
             arguments=kwargs, inputs=inputs, outputs=outputs)
 
-        # 6. Returns
+        # 6) Returns
         if num_outputs > 1: return outputs
         elif num_outputs == 1: return outputs[0]
         else: return None
-
-    @classmethod
-    def Convert(cls, value, dtype='float32'):
-        """Convert the given value to a tensor.
-
-        Parameters
-        ----------
-        value : number or Tensor
-            The value to convert.
-        dtype : str, optional, default='float32'
-            The data type of the tensor.
-
-        Returns
-        -------
-        Tensor
-            The tensor converted with given value.
-
-        """
-        if isinstance(value, Tensor): return value
-        else:
-            if not isinstance(value, np.ndarray):
-                try:
-                    if dtype:
-                        value = np.array(value, dtype=dtype)
-                    else:
-                        value = np.array(value)
-                except:
-                    raise TypeError('{} value can not be '
-                        'converted to Tensor.'.format(
-                            type(value).__name__))
-            ref_tensor = Tensor.Ref(
-                name=ws.GetDummyName('Constant',
-                    domain='Tensor', zero_based=False),
-                        shape=list(value.shape), dtype=str(value.dtype))
-            ref_tensor.set_value(value)
-            return ref_tensor
 
     def Fill(self, type, **kwargs):
         """Fill self with the specific type of filler.
@@ -1147,11 +1119,12 @@ class Tensor(object):
             Self, with filler registered implicitly in the backend.
 
         """
-        filler = pb.TensorFillerProto()
+        filler = _proto_def.TensorFillerProto()
         filler.tensor = self.name
         filler.type = type.lower()
 
-        if filler.type in ['placeholder', 'variable']: pass
+        if filler.type in ['placeholder', 'variable']:
+            pass
         elif filler.type == 'constant':
             filler.value = kwargs['value'] if 'value' in kwargs else 0
         elif filler.type in ['normal', 'gaussian']:
@@ -1180,39 +1153,5 @@ class Tensor(object):
         else:
             raise ValueError('Unknown filler type: {}'.format(filler.type))
 
-        ws.CreateFiller(filler)
+        _workspace.CreateFiller(filler)
         return self
-
-    def debug_expressions(self):
-        """Return the internal expressions for displaying.
-
-        Returns
-        -------
-        str
-            The internal expressions.
-
-        """
-        external_inputs = set()
-        outputs = set()
-        ordered_exprs = sorted(self.expressions.items(), key=lambda d: d[0])
-        buffer0 = '-------------------Expressions-------------------\n'
-        buffer1 = ''; buffer2 = 'Inputs: ['
-
-        for k, v in ordered_exprs:
-            buffer1 = buffer1 + '>>>  ' + str(k).zfill(3) + '. ('
-            for input in v.input:
-                if input not in outputs:
-                    external_inputs.add(input)
-                buffer1 = buffer1 + input + ', '
-            buffer1 = buffer1 + 'None, ' if len(v.input) == 0 else buffer1
-            buffer1 = buffer1[0:-2] + ') -> ' + v.type + ' -> ('
-            for output in v.output:
-                outputs.add(output)
-                buffer1 = buffer1 + output + ', '
-            buffer1 = buffer1[0:-2] + ') \n'
-
-        buffer1 = buffer1 + 'Target: ' + self._name + '\n'
-        for ex_input in external_inputs:
-            buffer2 = buffer2 + ex_input + ', '
-        buffer2 = buffer2 + ']\n'
-        return buffer0 + buffer2 + buffer1 + buffer0

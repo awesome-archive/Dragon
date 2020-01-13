@@ -21,61 +21,65 @@ namespace dragon {
 class GraphBase {
  public:
     /*! \brief Default constructor */
-    GraphBase(
-        const GraphDef&         meta_graph,
-        Workspace*              ws);
+    GraphBase(const GraphDef&, Workspace*);
 
     /*! \brief Default deconstructor */
     virtual ~GraphBase() {}
 
-    GraphDef BuildUpdateOps(const GraphDef& input_def);
-
     /*! \brief Create a graph from the optimized def */
-    virtual bool Create(
-        const GraphDef&         optimized_graph,
-        Workspace*              ws) = 0;
+    virtual bool Create(const GraphDef&, Workspace*) = 0;
 
     /*! \brief Run the graph once synchronously */
-    virtual bool Run(
-        const string&           include,
-        const string&           exclude,
-        int                     stream_id = 0) = 0;
+    virtual bool Run(const string&, const string&, int = 0) = 0;
 
-    /*! \brief Return the name of this graph */
+    /*! \brief Return the graph name */
     string name() const { return name_; }
+
+    /*! \brief Return the defined running phase */
+    const string& phase() const { return phase_; }
+
+    /*! \brief Return the argument map */
+    const Map<string, const Argument*>& args() { return args_; }
+
+    /*! \brief Return the specified argument */
+    const Argument& arg(const string& name) { return *(args_[name]); }
+
+    /*! \brief Return the stored raw def */
+    const GraphDef& def() const { return def_; }
+
+    /*! \brief Return the stored opt def */
+    const GraphDef& opt_def() const { return opt_def_; }
+
+    /*! \brief Return the parent workspace */
+    Workspace* ws() const { return ws_; }
 
  protected:
     /*! \brief Store the name and running phase */
     string name_, phase_;
 
     /*! \brief Store the defined arguments */
-    Map<string, Argument> args_;
+    Map<string, const Argument*> args_;
 
     /*! \brief Store the parent workspace */
     Workspace* ws_;
+
+    /*! \brief Store the def */
+    GraphDef def_, opt_def_;
 };
 
 class Graph : public GraphBase {
  public:
     /*! \brief Default constructor */
-    Graph(const GraphDef& meta_graph, Workspace* ws);
+    Graph(const GraphDef& def, Workspace* ws);
 
     /*! \brief Default deconstructor */
     virtual ~Graph() { for (auto* op : ops_) delete op; }
 
     /*! \brief Create a graph from the optimized def */
-    bool Create(
-        const GraphDef&         optimized_graph,
-        Workspace*              ws) override;
+    bool Create(const GraphDef&, Workspace*) override;
 
     /*! \brief Run the graph once synchronously */
-    bool Run(
-        const string&           include,
-        const string&           exclude,
-        int                     stream_id = 0) override;
-
-    /*! \brief Return the parent workspace */
-    Workspace* ws() const { return ws_; }
+    bool Run(const string&, const string&, int = 0) override;
 
  protected:
     /*! \brief Store the internal operators */
@@ -83,9 +87,9 @@ class Graph : public GraphBase {
 };
 
 /*! \brief Create a graph from the raw def */
-GraphBase* NewGraph(
-    const GraphDef&             def,
-    Workspace*                  ws);
+GraphBase* NewGraph(const GraphDef&, Workspace*);
+
+/* Macros */
 
 DECLARE_REGISTRY(
     GraphRegistry,

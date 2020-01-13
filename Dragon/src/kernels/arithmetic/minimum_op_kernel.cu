@@ -8,155 +8,160 @@ namespace dragon {
 
 namespace kernel {
 
-/*! Minimum <T = ?, Device = CUDA> */
+/* <T = ?, Device = CUDA> */
 
 template <typename T>
 __global__ void _Minimum(
-    const int               count,
-    const T*                x1,
-    const T*                x2,
+    const int               nthreads,
+    const T*                a,
+    const T*                b,
     T*                      y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        y[idx] = min(x1[idx], x2[idx]);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        y[i] = min(a[i], b[i]);
     }
 }
 
-/*! Minimum <T = float16, Device = CUDA> */
+/* <T = float16, Device = CUDA> */
 
-__global__ void _MinimumHalf(
-    const int               count,
-    const half*             x1,
-    const half*             x2,
+template<> __global__ void _Minimum<half>(
+    const int               nthreads,
+    const half*             a,
+    const half*             b,
     half*                   y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
 #if __CUDA_ARCH__ >= 530
-        y[idx] = __hlt(x1[idx], x2[idx]) ? x1[idx] : x2[idx];
+        y[i] = __hlt(a[i], b[i]) ? a[i] : b[i];
 #endif
     }
 }
 
-/*! BroadcastMinimum <T = ?, Device = CUDA> */
+/* <T = ?, Device = CUDA> */
 
 template <typename T>
 __global__ void _BroadcastMinimum(
-    const int               count,
-    const T*                x1,
-    const T                 x2,
+    const int               nthreads,
+    const T*                a,
+    const T                 b,
     T*                      y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        y[idx] = min(x1[idx], x2);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        y[i] = min(a[i], b);
     }
 }
 
-/*! BroadcastMinimum <T = float16, Device = CUDA> */
+/* <T = float16, Device = CUDA> */
 
-__global__ void _BroadcastMinimumHalf(
-    const int               count,
-    const half*             x1,
-    const half              x2,
+template<> __global__ void _BroadcastMinimum<half>(
+    const int               nthreads,
+    const half*             a,
+    const half              b,
     half*                   y) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
 #if __CUDA_ARCH__ >= 530
-        y[idx] = __hlt(x1[idx], x2) ? x1[idx] : x2;
+        y[i] = __hlt(a[i], b) ? a[i] : b;
 #endif
     }
 }
 
-/*! MinimumGrad <T = ?, Device = CUDA> */
+/* <T = ?, Device = CUDA> */
 
 template <typename T>
 __global__ void _MinimumGrad(
-    const int               count,
-    const T*                x1,
-    const T*                x2,
+    const int               nthreads,
+    const T*                a,
+    const T*                b,
     const T*                dy,
-    T*                      dx1,
-    T*                      dx2) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        const bool dy_to_dx1 = x1[idx] < x2[idx];
-        dx1[idx] = dy_to_dx1 ? dy[idx] : 0;
-        dx2[idx] = dy_to_dx1 ? 0 : dy[idx];
+    T*                      da,
+    T*                      db) {
+    const T kZero = T(0);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        const bool dy_to_da = a[i] < b[i];
+        da[i] = dy_to_da ? dy[i] : kZero;
+        db[i] = dy_to_da ? kZero : dy[i];
     }
 }
 
-/*! MinimumGrad <T = float16, Device = CUDA> */
+/* <T = float16, Device = CUDA> */
 
-__global__ void _MinimumGradHalf(
-    const int               count,
-    const half*             x1,
-    const half*             x2,
+template<> __global__ void _MinimumGrad<half>(
+    const int               nthreads,
+    const half*             a,
+    const half*             b,
     const half*             dy,
-    half*                   dx1,
-    half*                   dx2) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    half*                   da,
+    half*                   db) {
 #if __CUDA_ARCH__ >= 530
-        const bool dy_to_dx1 = __hlt(x1[idx], x2[idx]);
-        dx1[idx] = dy_to_dx1 ? dy[idx] : __float2half(0.f);
-        dx2[idx] = dy_to_dx1 ? __float2half(0.f) : dy[idx];
-#endif
+    const half kZero = __float2half(0.f);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        const bool dy_to_da = __hlt(a[i], b[i]);
+        da[i] = dy_to_da ? dy[i] : kZero;
+        db[i] = dy_to_da ? kZero : dy[i];
     }
+#endif
 }
 
-/*! BroadcastMinimumGrad <T = ?, Device = CUDA> */
+/* <T = ?, Device = CUDA> */
 
 template <typename T>
 __global__ void _BroadcastMinimumGrad(
-    const int               count,
-    const T*                x1,
-    const T                 x2,
+    const int               nthreads,
+    const T*                a,
+    const T                 b,
     const T*                dy,
-    T*                      dx1,
-    T*                      dx2) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
-        dx1[idx] = (x1[idx] < x2) ? dy[idx] : 0;
+    T*                      da,
+    T*                      db) {
+    const T kZero = T(0);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        da[i] = (a[i] < b) ? dy[i] : kZero;
     }
 }
 
-/*! BroadcastMinimumGrad <T = float16, Device = CUDA> */
+/* <T = float16, Device = CUDA> */
 
-__global__ void _BroadcastMinimumGradHalf(
-    const int               count,
-    const half*             x1,
-    const half              x2,
+template<> __global__ void _BroadcastMinimumGrad<half>(
+    const int               nthreads,
+    const half*             a,
+    const half              b,
     const half*             dy,
-    half*                   dx1,
-    half*                   dx2) {
-    CUDA_1D_KERNEL_LOOP(idx, count) {
+    half*                   da,
+    half*                   db) {
 #if __CUDA_ARCH__ >= 530
-        dx1[idx] = (__hlt(x1[idx], x2)) ?
-            dy[idx] : __float2half(0.f);
-#endif
+    const half kZero = __float2half(0.f);
+    CUDA_1D_KERNEL_LOOP(i, nthreads) {
+        da[i] = __hlt(a[i], b) ? dy[i] : kZero;
     }
+#endif
 }
 
-/*! Kernel Launchers */
+/* Kernel Launchers */
 
 #define DEFINE_MINIMUM_KERNEL_LAUNCHER(name, T, T2) \
     template <> void name<T, CUDAContext>( \
         const int               count, \
-        const T*                x1, \
-        const T2                x2, \
+        const T*                a, \
+        const T2                b, \
         T*                      y, \
         CUDAContext*            ctx) { \
-        _##name<T> \
-            << < CUDA_BLOCKS(count), CUDA_THREADS, \
-                 0, ctx->cuda_stream() >> > \
-            (count, x1, x2, y); \
+        _##name \
+            <<< CUDA_BLOCKS(count), CUDA_THREADS, \
+                0, ctx->cuda_stream() >>>( \
+            count, a, b, y \
+        ); \
     }
 
 #define DEFINE_MINIMUM_GRAD_KERNEL_LAUNCHER(name, T, T2) \
     template <> void name<T, CUDAContext>( \
         const int               count, \
-        const T*                x1, \
-        const T2                x2, \
+        const T*                a, \
+        const T2                b, \
         const T*                dy, \
-        T*                      dx1, \
-        T*                      dx2, \
+        T*                      da, \
+        T*                      db, \
         CUDAContext*            ctx) { \
-        _##name<T> \
-            << < CUDA_BLOCKS(count), CUDA_THREADS, \
-                 0, ctx->cuda_stream() >> > \
-            (count, x1, x2, dy, dx1, dx2); \
+        _##name \
+            <<< CUDA_BLOCKS(count), CUDA_THREADS, \
+                0, ctx->cuda_stream() >>>( \
+            count, a, b, dy, da, db \
+        ); \
     }
 
 DEFINE_MINIMUM_KERNEL_LAUNCHER(Minimum, int8_t, int8_t*);
@@ -189,66 +194,74 @@ DEFINE_MINIMUM_GRAD_KERNEL_LAUNCHER(BroadcastMinimumGrad, double, double);
 
 template <> void Minimum<float16, CUDAContext>(
     const int               count,
-    const float16*          x1,
-    const float16*          x2,
+    const float16*          a,
+    const float16*          b,
     float16*                y,
     CUDAContext*            ctx) {
-    _MinimumHalf \
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, reinterpret_cast<const half*>(x1),
-            reinterpret_cast<const half*>(x2),
-                reinterpret_cast<half*>(y));
+    _Minimum \
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count,
+        reinterpret_cast<const half*>(a),
+        reinterpret_cast<const half*>(b),
+        reinterpret_cast<half*>(y)
+    );
 }
 
 template <> void BroadcastMinimum<float16, CUDAContext>(
     const int               count,
-    const float16*          x1,
-    const float16           x2,
+    const float16*          a,
+    const float16           b,
     float16*                y,
     CUDAContext*            ctx) {
-    _BroadcastMinimumHalf \
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, reinterpret_cast<const half*>(x1),
-            cast::to<half>(x2),
-                reinterpret_cast<half*>(y));
+    _BroadcastMinimum \
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count,
+        reinterpret_cast<const half*>(a),
+        cast::to<half>(b),
+        reinterpret_cast<half*>(y)
+    );
 }
 
 template <> void MinimumGrad<float16, CUDAContext>(
     const int               count,
-    const float16*          x1,
-    const float16*          x2,
+    const float16*          a,
+    const float16*          b,
     const float16*          dy,
-    float16*                dx1,
-    float16*                dx2,
+    float16*                da,
+    float16*                db,
     CUDAContext*            ctx) {
-    _MinimumGradHalf \
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, reinterpret_cast<const half*>(x1),
-            reinterpret_cast<const half*>(x2),
-                reinterpret_cast<const half*>(dy),
-                    reinterpret_cast<half*>(dx1),
-                        reinterpret_cast<half*>(dx2));
+    _MinimumGrad \
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count,
+        reinterpret_cast<const half*>(a),
+        reinterpret_cast<const half*>(b),
+        reinterpret_cast<const half*>(dy),
+        reinterpret_cast<half*>(da),
+        reinterpret_cast<half*>(db)
+    );
 }
 
 template <> void BroadcastMinimumGrad<float16, CUDAContext>(
     const int               count,
-    const float16*          x1,
-    const float16           x2,
+    const float16*          a,
+    const float16           b,
     const float16*          dy,
-    float16*                dx1,
-    float16*                dx2,
+    float16*                da,
+    float16*                db,
     CUDAContext*            ctx) {
-    _BroadcastMinimumGradHalf \
-        << < CUDA_BLOCKS(count), CUDA_THREADS,
-             0, ctx->cuda_stream() >> >
-        (count, reinterpret_cast<const half*>(x1),
-            cast::to<half>(x2),
-                reinterpret_cast<const half*>(dy),
-                    reinterpret_cast<half*>(dx1),
-                        reinterpret_cast<half*>(dx2));
+    _BroadcastMinimumGrad \
+        <<< CUDA_BLOCKS(count), CUDA_THREADS,
+            0, ctx->cuda_stream() >>>(
+        count,
+        reinterpret_cast<const half*>(a),
+        cast::to<half>(b),
+        reinterpret_cast<const half*>(dy),
+        reinterpret_cast<half*>(da),
+        reinterpret_cast<half*>(db)
+    );
 }
 
 #undef DEFINE_MINIMUM_KERNEL_LAUNCHER

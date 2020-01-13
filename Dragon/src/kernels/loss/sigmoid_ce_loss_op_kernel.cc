@@ -5,48 +5,56 @@ namespace dragon {
 
 namespace kernel {
 
-/*! SigmoidCrossEntropy <T = float32, Device = CPU> */
+/* <T = float32, Device = CPU> */
 
 template <> void SigmoidCrossEntropy<float, CPUContext>(
     const int               count,
-    const float*            logits,
-    const float*            targets,
-    float*                  losses,
-    int*                    flags,
+    const float*            logit,
+    const float*            target,
+    float*                  loss,
+    int*                    flag,
     CPUContext*             ctx) {
 #ifdef WITH_OMP
-    #pragma omp parallel for num_threads(GET_OMP_THREADS(count))
+    #pragma omp parallel for num_threads(OMP_THREADS(count))
 #endif
     for (int i = 0; i < count; ++i) {
-        if (targets[i] < 0) {
-            losses[i] = flags[i] = 0;
+        if (target[i] < 0) {
+            loss[i] = flag[i] = 0;
         } else {
-            losses[i] = std::log(
-                1 + std::exp(logits[i] - 2 * logits[i] * (logits[i] >= 0))
-            ) + logits[i] * ((logits[i] >= 0) - targets[i]);
-            flags[i] = 1;
+            loss[i] = std::log(
+                1.f + std::exp(
+                    logit[i] - 2.f * logit[i] * (
+                            logit[i] >= 0
+                        )
+                )
+            ) + logit[i] * (
+                (logit[i] >= 0) - target[i]
+            );
+            flag[i] = 1;
         }
     }
 }
 
-/*! SigmoidCrossEntropyGrad <T = float32, Device = CPU> */
+/* <T = float32, Device = CPU> */
 
 template <> void SigmoidCrossEntropyGrad<float, CPUContext>(
     const int               count,
-    const float*            logits,
-    const float*            targets,
-    float*                  dlogits,
-    int*                    flags,
+    const float*            logit,
+    const float*            target,
+    float*                  dlogit,
+    int*                    flag,
     CPUContext*             ctx) {
 #ifdef WITH_OMP
-    #pragma omp parallel for num_threads(GET_OMP_THREADS(count))
+    #pragma omp parallel for num_threads(OMP_THREADS(count))
 #endif
     for (int i = 0; i < count; ++i) {
-        if (targets[i] < 0) {
-            dlogits[i] = flags[i] = 0;
+        if (target[i] < 0) {
+            dlogit[i] = flag[i] = 0;
         } else {
-            dlogits[i] = 1 / (1 + std::exp(-logits[i])) - targets[i];
-            flags[i] = 1;
+            dlogit[i] = 1.f / (
+                1.f + std::exp(-logit[i])
+            ) - target[i];
+            flag[i] = 1;
         }
     }
 }

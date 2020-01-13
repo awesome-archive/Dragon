@@ -17,7 +17,8 @@ from __future__ import print_function
 
 import math
 import numpy
-import dragon
+
+from dragon.core import workspace as _workspace
 
 
 class OperatorHelper(object):
@@ -31,19 +32,20 @@ class OperatorHelper(object):
     _SIMPLE_APPLY = (
         # Following operators is the simplest case:
         # Input(0) => Output(0), shape and data type unchanged.
-        'Relu', 'PRelu', 'Elu', 'SElu', 'Sigmoid', 'Tanh', 'Dropout', 'Softmax',
+        'Relu', 'PRelu', 'Elu', 'SElu', 'Sigmoid', 'Tanh', 'Softmax',
+        'Dropout', 'DropPath', 'DropBlock2d', 'ChannelShuffle',
         'Add', 'Sub', 'Mul', 'Div', 'Clip', 'Log', 'Exp', 'Pow', 'Square', 'Sqrt',
-        'Accumulate', 'Affine', 'Copy', 'Compare', 'StopGradient',  'MPIBroadcast',
-        'BatchNorm', 'GroupNorm', 'L2Norm', 'LRN', 'BiasAdd', 'DropBlock2d',
+        'Accumulate', 'Affine', 'Copy', 'StopGradient', 'MPIBroadcast',
+        'BatchNorm', 'GroupNorm', 'L2Norm', 'LRN', 'BiasAdd',
     )
 
     @classmethod
     def get_index_and_name(cls, prefix='Op'):
-        name = dragon.workspace.GetDummyName(prefix, domain='Operator')
+        name = _workspace.GetDummyName(prefix, domain='Operator')
         try:
             _, op_idx = name.split('_')
         except:
-            name = dragon.workspace.GetDummyName(prefix, domain='Operator')
+            name = _workspace.GetDummyName(prefix, domain='Operator')
             _, op_idx = name.split('_')
         return int(op_idx), name
 
@@ -105,7 +107,13 @@ class OperatorHelper(object):
                 len(outputs[0].shape) < len(inputs[1].shape):
                     outputs[0].shape = inputs[1].shape
         except:
-            pass
+            try:
+                outputs[0].shape = inputs[1].shape[:]
+                if outputs[0].shape != inputs[0].shape and \
+                        len(outputs[0].shape) < len(inputs[0].shape):
+                    outputs[0].shape = inputs[0].shape
+            except:
+                pass
         return outputs
 
     @classmethod
@@ -288,8 +296,8 @@ class OperatorHelper(object):
     def _apply_NLLLoss(cls, arguments, inputs, outputs):
         outputs[0].dtype = 'float32'
         axis = arguments['axis']
-        normalization = arguments['normalization']
-        if normalization != 'UNIT': outputs[0].shape = []
+        reduction = arguments['reduction']
+        if reduction != 'NONE': outputs[0].shape = []
         else:
             try:
                 outputs[0].shape = inputs[0].shape[:]
@@ -305,8 +313,8 @@ class OperatorHelper(object):
     @classmethod
     def _apply_SigmoidCrossEntropy(cls, arguments, inputs, outputs):
         outputs[0].dtype = 'float32'
-        normalization = arguments['normalization']
-        if normalization != 'UNIT': outputs[0].shape = []
+        reduction = arguments['reduction']
+        if reduction != 'NONE': outputs[0].shape = []
         else:
             try:
                 outputs[0].shape = inputs[0].shape[:]
@@ -389,16 +397,28 @@ class OperatorHelper(object):
     ###############################################
 
     @classmethod
-    def _apply_Gather(cls, arguments, inputs, outputs):
+    def _apply_Where(cls, arguments, inputs, outputs):
+        return cls._apply_Maximum(arguments, inputs, outputs)
+
+    @classmethod
+    def _apply_IndexSelect(cls, arguments, inputs, outputs):
         outputs[0].dtype = inputs[0].dtype
         axis = arguments['axis']
         try:
+            try: index_shape = inputs[1].shape[:]
+            except: index_shape = [None]
             outputs[0].shape = \
                 inputs[0].shape[:axis] + \
-                    inputs[1].shape[:] + \
-                        inputs[0].shape[axis + 1:]
+                    index_shape[:] + \
+                inputs[0].shape[axis + 1:]
         except:
             pass
+        return outputs
+
+    @classmethod
+    def _apply_MaskedSelect(cls, arguments, inputs, outputs):
+        outputs[0].dtype = inputs[0].dtype
+        outputs[0].shape = [None]
         return outputs
 
     @classmethod
@@ -636,6 +656,35 @@ class OperatorHelper(object):
         return outputs
 
     @classmethod
+    def _apply_Flatten(cls, arguments, inputs, outputs):
+        outputs[0].dtype = inputs[0].dtype
+        keep_axes = arguments['keep_axes']
+        axis, num_axes = arguments['axis'], arguments['num_axes']
+        try:
+            fake_shape = inputs[0].shape[:]
+            fake_shape = [1 if dim is None else dim for dim in fake_shape]
+            if keep_axes is not None:
+                keep_axes = min(keep_axes, len(inputs.shape))
+                total_count = numpy.prod(fake_shape)
+                outputs[0].shape = []
+                for i in range(keep_axes - 1):
+                    outputs[0].shape.append(inputs[0].shape[i])
+                    total_count *= fake_shape[i]
+                if total_count != 1:
+                    outputs[0].shape.append(total_count)
+            else:
+                if num_axes == -1:
+                    num_axes = len(inputs[0].shape) - axis
+                num_axes = max(num_axes, 1)
+                num_flatten = numpy.prod(fake_shape[axis : axis + num_axes])
+                outputs[0].shape = \
+                    inputs[0].shape[: axis] + [num_flatten] \
+                        + inputs[0].shape[axis + num_axes:]
+        except:
+            pass
+        return outputs
+
+    @classmethod
     def _apply_Reshape(cls, arguments, inputs, outputs):
         outputs[0].dtype = inputs[0].dtype
         shape = arguments['dims']
@@ -747,6 +796,25 @@ class OperatorHelper(object):
         except:
             pass
         return outputs
+
+    @classmethod
+    def _apply_NonZero(cls, arguments, inputs, outputs):
+        outputs[0].dtype = 'int64'
+        try:
+            outputs[0].shape = [None, len(inputs[0].shape)]
+        except:
+            pass
+        return outputs
+
+    ###############################################
+    #                                             #
+    #                Control Flow                 #
+    #                                             #
+    ###############################################
+
+    @classmethod
+    def _apply_Compare(cls, arguments, inputs, outputs):
+        return cls._apply_Maximum(arguments, inputs, outputs)
 
     ###############################################
     #                                             #

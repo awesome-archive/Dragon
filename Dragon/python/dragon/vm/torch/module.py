@@ -24,10 +24,13 @@ import dragon
 import warnings
 from collections import OrderedDict
 
-from dragon.core import proto_utils, logging
-from dragon.core.scope import get_default_name_scope
+from dragon import config as _cfg
+from dragon.core import scope as _scope
+from dragon.core import logging as _logging
+from dragon.core import proto_utils as _proto_utils
+from dragon.core import tensor_utils as _tensor_utils
 
-from dragon.vm.torch.c_api import device as Device
+from dragon.vm.torch.c_api import device as _Device
 from dragon.vm.torch.tensor import Tensor, Parameter
 from dragon.vm.torch.execution import RunOperator
 from dragon.vm.torch.environ import add_submodule, get_module_name
@@ -38,7 +41,7 @@ class Module(object):
         self._modules = OrderedDict()
         self._parameters = OrderedDict()
         self._buffers = OrderedDict()
-        self._device = Device()
+        self._device = _Device()
         self._module_key = None
         self._module_def = None
         self.training = True
@@ -107,7 +110,7 @@ class Module(object):
         return destination
 
     def load_state_dict(self, state_dict, strict=True, verbose=True):
-        if verbose: logging.info('Load the state dict.')
+        if verbose: _logging.info('Load the state dict.')
         unexpected = []
         own_state = self.state_dict()
         for name, param in state_dict.items():
@@ -122,12 +125,12 @@ class Module(object):
                 if isinstance(param, Tensor):
                     own_state[name].copy_(param)
                 elif isinstance(param, numpy.ndarray):
-                    dragon.tensor_utils.SetPyArray(own_state[name], param)
+                    _tensor_utils.SetArray(own_state[name], param)
                 else:
                     raise ValueError('Excepted the type of source state is either '
                         'dragon.vm.torch.Tensor or numpy.ndarray, got {}.'.format(type(param)))
                 if verbose:
-                    logging.info('Tensor({}) loaded, Size: ({})'.format(name,
+                    _logging.info('Tensor({}) loaded, Size: ({})'.format(name,
                             ', '.join([str(d) for d in param_shape])))
             else:
                 unexpected.append(name)
@@ -192,7 +195,7 @@ class Module(object):
         raise NotImplementedError('The base module can not be called.')
 
     def name_scope(self, remove_separator=True):
-        scope = get_default_name_scope()
+        scope = _scope.get_default_name_scope()
         if remove_separator and \
             len(scope) > 0 and \
                 scope[-1] == '/':
@@ -268,7 +271,7 @@ class Module(object):
         return self
 
     def cpu(self):
-        self._device = Device()
+        self._device = _Device()
         # Remove key and op to re-create a one with new device
         self._module_key = self._module_def = None
         return self._apply(lambda t: t.cpu(),
@@ -276,7 +279,7 @@ class Module(object):
 
     def cuda(self, device=None):
         if device is None: device = dragon.config.GetGPU()
-        self._device = Device('cuda', device)
+        self._device = _Device('cuda', device)
         # Remove key and op to re-create a one with new device
         self._module_key = self._module_def = None
         return self._apply(lambda t: t.cuda(device),
@@ -308,15 +311,18 @@ class Module(object):
         return self._module_key
 
     def _gen_module_def(self):
+        rng_seed = _cfg.GetGlobalOptions()['random_seed']
         self._module_def = \
-            proto_utils.MakeCXXOperatorDef(
+            _proto_utils.MakeCXXOperatorDef(
                 name='runtime',
                 uid=self.module_key,
                 op_type=self.op_meta['op_type'],
-                device_option=proto_utils.
+                device_option=_proto_utils.
                     GetDeviceOption(
                         self._device.type,
-                            self._device.index),
+                        self._device.index,
+                        rng_seed=rng_seed,
+                ),
                 **self.op_meta['arguments']
             )
 
@@ -336,11 +342,13 @@ class Module(object):
 
     def run(self, inputs, outputs, auto_grad=True, callback=None):
         if self._module_def is None: self._gen_module_def()
-        meta = (self.module_key, self._module_def)
         return RunOperator(
-            inputs, outputs, meta,
-                auto_grad=auto_grad,
-                    callback_on_run=callback)
+            inputs=inputs,
+            outputs=outputs,
+            meta=(self.module_key, self._module_def),
+            auto_grad=auto_grad,
+            callback_on_run=callback,
+        )
 
     def train(self, mode=True):
         self.training = mode

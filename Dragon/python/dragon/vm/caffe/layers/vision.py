@@ -15,12 +15,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import dragon
-from ..layer import Layer
+from dragon import ops as _ops
+from ..layer import Layer as _Layer
 
 
-class ConvolutionLayer(Layer):
-    """The implementation of ``ConvolutionLayer``.
+class ConvolutionLayer(_Layer):
+    """The implementation of *ConvolutionLayer*.
 
     Parameters
     ----------
@@ -28,19 +28,19 @@ class ConvolutionLayer(Layer):
         The output channels. Refer `ConvolutionParameter.num_output`_.
     bias_term : boolean
         Whether to use bias. Refer `ConvolutionParameter.bias_term`_.
-    pad : list of int
+    pad : sequence of int
         The zero padding size(s). Refer `ConvolutionParameter.pad`_.
     kernel_size : list of int
         The kernel size(s). Refer `ConvolutionParameter.kernel_size`_.
-    stride : list of int
+    stride : sequence of int
         The stride(s). Refer `ConvolutionParameter.stride`_.
-    dilation : list of int
+    dilation : sequence of int
         The dilation(s). Refer `ConvolutionParameter.dilation`_.
     group : int
          The group size. Refer `ConvolutionParameter.group`_.
     weight_filler : FillerParameter
         The filler of weights. Refer `ConvolutionParameter.weight_filler`_.
-    bias_filler : FillerParameters
+    bias_filler : FillerParameter
         The filler of bias. Refer `ConvolutionParameter.bias_filler`_.
 
     """
@@ -76,11 +76,11 @@ class ConvolutionLayer(Layer):
 
     def LayerSetup(self, bottom):
         inputs = [bottom] + [blob['data'] for blob in self._blobs]
-        return dragon.ops.Conv2d(inputs, **self.arguments)
+        return _ops.Conv2d(inputs, **self.arguments)
 
 
-class DepthwiseConvolutionLayer(Layer):
-    """The implementation of ``DepthwiseConvolutionLayer``.
+class DepthwiseConvolutionLayer(_Layer):
+    """The implementation of *DepthwiseConvolutionLayer*.
 
     Parameters
     ----------
@@ -88,15 +88,15 @@ class DepthwiseConvolutionLayer(Layer):
         The output channels. Refer `ConvolutionParameter.num_output`_.
     bias_term : boolean
         Whether to use bias. Refer `ConvolutionParameter.bias_term`_.
-    pad : list of int
+    pad : sequence of int
         The zero padding size(s). Refer `ConvolutionParameter.pad`_.
-    kernel_size : list of int
+    kernel_size : sequence of int
         The kernel size(s). Refer `ConvolutionParameter.kernel_size`_.
-    stride : list of int
+    stride : sequence of int
         The stride(s). Refer `ConvolutionParameter.stride`_.
     weight_filler : FillerParameter
         The filler of weights. Refer `ConvolutionParameter.weight_filler`_.
-    bias_filler : FillerParameters
+    bias_filler : FillerParameter
         The filler of bias. Refer `ConvolutionParameter.bias_filler`_.
 
     """
@@ -130,11 +130,11 @@ class DepthwiseConvolutionLayer(Layer):
 
     def LayerSetup(self, bottom):
         inputs = [bottom] + [blob['data'] for blob in self._blobs]
-        return dragon.ops.DepthwiseConv2d(inputs, **self.arguments)
+        return _ops.DepthwiseConv2d(inputs, **self.arguments)
 
 
 class DeconvolutionLayer(ConvolutionLayer):
-    """The implementation of ``DeconvolutionLayer``.
+    """The implementation of *DeconvolutionLayer*.
 
     Parameters
     ----------
@@ -142,19 +142,19 @@ class DeconvolutionLayer(ConvolutionLayer):
         The output channels. Refer `ConvolutionParameter.num_output`_.
     bias_term : boolean
         Whether to use bias. Refer `ConvolutionParameter.bias_term`_.
-    pad : list of int
+    pad : sequence of int
         The zero padding size(s). Refer `ConvolutionParameter.pad`_.
-    kernel_size : list of int
+    kernel_size : sequence of int
         The kernel size(s). Refer `ConvolutionParameter.kernel_size`_.
-    stride : list of int
+    stride : sequence of int
         The stride(s). Refer `ConvolutionParameter.stride`_.
-    dilation : list of int
+    dilation : sequence of int
         The dilation(s). Refer `ConvolutionParameter.dilation`_.
     group : int
          The group size. Refer `ConvolutionParameter.group`_.
     weight_filler : FillerParameter
         The filler of weights. Refer `ConvolutionParameter.weight_filler`_.
-    bias_filler : FillerParameters
+    bias_filler : FillerParameter
         The filler of bias. Refer `ConvolutionParameter.bias_filler`_.
 
     """
@@ -163,29 +163,29 @@ class DeconvolutionLayer(ConvolutionLayer):
 
     def LayerSetup(self, bottom):
         inputs = [bottom] + [blob['data'] for blob in self._blobs]
-        return dragon.ops.ConvTranspose2d(inputs, **self.arguments)
+        return _ops.ConvTranspose2d(inputs, **self.arguments)
 
 
-class PoolingLayer(Layer):
-    """The implementation of ``PoolingLayer``.
+class PoolingLayer(_Layer):
+    """The implementation of *PoolingLayer*.
 
     Parameters
     ----------
     pool : PoolMethod
         The method. Refer `PoolingParameter.pool`_.
-    pad : list of int
+    pad : sequence of int
         The zero padding size(s). Refer `PoolingParameter.pad`_.
     pad_h : int
         The padding size of height. Refer `PoolingParameter.pad_h`_.
     pad_w : int
         The padding size of width. Refer `PoolingParameter.pad_w`_.
-    kernel_size : list of int
+    kernel_size : sequence of int
         The kernel size(s). Refer `PoolingParameter.kernel_size`_.
     kernel_h : int
         The kernel size of height. Refer `PoolingParameter.kernel_h`_.
     kernel_w : int
         The kernel size of width. Refer `PoolingParameter.kernel_w`_.
-    stride : list of int
+    stride : sequence of int
         The strides. Refer `PoolingParameter.stride`_.
     stride_h : int
         The stride of height. Refer `PoolingParameter.stride_h`_.
@@ -212,11 +212,11 @@ class PoolingLayer(Layer):
         else: self.arguments['strides'] = [param.stride_h, param.stride_w]
 
     def LayerSetup(self, bottom):
-        return dragon.ops.Pool2d(bottom, **self.arguments)
+        return _ops.Pool2d(bottom, **self.arguments)
 
 
-class ROIPoolingLayer(Layer):
-    """The implementation of ``ROIPoolingLayer``.
+class ROIPoolingLayer(_Layer):
+    """The implementation of *ROIPoolingLayer*.
 
     Parameters
     ----------
@@ -238,11 +238,11 @@ class ROIPoolingLayer(Layer):
         }
 
     def LayerSetup(self, bottom):
-        return dragon.ops.ROIPool(bottom, **self.arguments)
+        return _ops.ROIPool(bottom, **self.arguments)
 
 
-class ROIAlignLayer(Layer):
-    """The implementation of ``ROIAlignLayer``.
+class ROIAlignLayer(_Layer):
+    """The implementation of *ROIAlignLayer*.
 
     Parameters
     ----------
@@ -264,11 +264,11 @@ class ROIAlignLayer(Layer):
         }
 
     def LayerSetup(self, bottom):
-        return dragon.ops.ROIAlign(bottom, **self.arguments)
+        return _ops.ROIAlign(bottom, **self.arguments)
 
 
-class LRNLayer(Layer):
-    """The implementation of ``LRNLayer``.
+class LRNLayer(_Layer):
+    """The implementation of *LRNLayer*.
 
     Parameters
     ----------
@@ -296,15 +296,15 @@ class LRNLayer(Layer):
         }
 
     def LayerSetup(self, bottom):
-        return dragon.ops.LRN(bottom, **self.arguments)
+        return _ops.LRN(bottom, **self.arguments)
 
 
-class NNResizeLayer(Layer):
-    """The implementation of ``NNResizeLayer``.
+class NNResizeLayer(_Layer):
+    """The implementation of *NNResizeLayer*.
 
     Parameters
     ----------
-    shape : caffe_pb2.BlobShape
+    shape : BlobShape
         The output shape. Refer `ResizeParameter.shape`_.
     fx : float
         The scale factor of height. Refer `ResizeParameter.fx`_.
@@ -330,15 +330,15 @@ class NNResizeLayer(Layer):
                 raise ValueError('The second bottom should be provided to determine the shape.')
             self.arguments['shape_like'] = bottom[1]
             bottom = bottom[0]
-        return dragon.ops.NNResize(bottom, **self.arguments)
+        return _ops.NNResize(bottom, **self.arguments)
 
 
-class BilinearResizeLayer(Layer):
-    """The implementation of ``BilinearResizeLayer``.
+class BilinearResizeLayer(_Layer):
+    """The implementation of *BilinearResizeLayer*.
 
     Parameters
     ----------
-    shape : caffe_pb2.BlobShape
+    shape : BlobShape
         The output shape. Refer `ResizeParameter.shape`_.
     fx : float
         The scale factor of height. Refer `ResizeParameter.fx`_.
@@ -364,11 +364,11 @@ class BilinearResizeLayer(Layer):
                 raise ValueError('The second bottom should be provided to determine the shape.')
             self.arguments['shape_like'] = bottom[1]
             bottom = bottom[0]
-        return dragon.ops.BilinearResize(bottom, **self.arguments)
+        return _ops.BilinearResize(bottom, **self.arguments)
 
 
-class DropBlockLayer(Layer):
-    """The implementation of ``DropBlock2dLayer``.
+class DropBlockLayer(_Layer):
+    """The implementation of *DropBlock2dLayer*.
 
     Parameters
     ----------
@@ -394,4 +394,4 @@ class DropBlockLayer(Layer):
         }
 
     def LayerSetup(self, bottom):
-        return dragon.ops.DropBlock2d(bottom, **self.arguments)
+        return _ops.DropBlock2d(bottom, **self.arguments)

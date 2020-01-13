@@ -27,8 +27,8 @@ class Indexing(BaseModule):
     """
     def __init__(self, key, dev, **kwargs):
         super(Indexing, self).__init__(key, dev, **kwargs)
-        self.n_starts = kwargs.get('n_starts', 0)
-        self.n_sizes = kwargs.get('n_sizes', 0)
+        self.nstarts = kwargs.get('nstarts', 0)
+        self.nsizes = kwargs.get('nsizes', 0)
         self.register_op()
 
     def register_op(self):
@@ -36,60 +36,24 @@ class Indexing(BaseModule):
             'op_type': 'Crop',
             'arguments': {
                 'starts_desc': [
-                    '${{ANCHOR}}/starts[{}]'.format(n)
-                        for n in range(self.n_starts)],
+                    '${{HANDLE}}/starts[{}]'.format(n)
+                        for n in range(self.nstarts)],
                 'sizes_desc': [
-                    '${{ANCHOR}}/sizes[{}]'.format(n)
-                        for n in range(self.n_sizes)],
+                    '${{HANDLE}}/sizes[{}]'.format(n)
+                        for n in range(self.nsizes)],
             },
         }
 
-    def update_arguments(self, A, starts, sizes):
+    def update_args(self, A, starts, sizes):
         for i, e in enumerate(starts):
-            self.set_argument_i64('{}/starts[{}]'.format(A, i), e)
-            self.set_argument_i64('{}/sizes[{}]'.format(A, i), sizes[i])
+            self.set_arg_i64('{}/starts[{}]'.format(A, i), e)
+            self.set_arg_i64('{}/sizes[{}]'.format(A, i), sizes[i])
 
     def forward(self, x, starts, sizes):
         inputs = [x]; self.unify_devices(inputs)
         outputs = [self.register_output()]
-        callback = lambda A: self.update_arguments(A, starts, sizes)
+        callback = lambda A: self.update_args(A, starts, sizes)
         return self.run(inputs, outputs, callback=callback)
-
-
-class Assigning(BaseModule):
-    """This module imports the *AssignOp* from backend.
-
-    Arbitrary length of starts and sizes will be take.
-
-    """
-    def __init__(self, key, dev, **kwargs):
-        super(Assigning, self).__init__(key, dev, **kwargs)
-        self.n_starts = kwargs.get('n_starts', 0)
-        self.n_sizes = kwargs.get('n_sizes', 0)
-        self.register_op()
-
-    def register_op(self):
-        self.op_meta = {
-            'op_type': 'Assign',
-            'arguments': {
-                'starts_desc': [
-                    '${{ANCHOR}}/starts[{}]'.format(n)
-                        for n in range(self.n_starts)],
-                'sizes_desc': [
-                    '${{ANCHOR}}/sizes[{}]'.format(n)
-                        for n in range(self.n_sizes)],
-            },
-        }
-
-    def update_arguments(self, A, starts, sizes):
-        for i, e in enumerate(starts):
-            self.set_argument_i64('{}/starts[{}]'.format(A, i), e)
-            self.set_argument_i64('{}/sizes[{}]'.format(A, i), sizes[i])
-
-    def forward(self, x, y, starts, sizes):
-        self.unify_devices([x, y])
-        callback = lambda A: self.update_arguments(A, starts, sizes)
-        return self.run([x], [y], callback=callback, auto_grad=False)
 
 
 class Concat(BaseModule):
@@ -117,8 +81,59 @@ class Concat(BaseModule):
         return self.run(inputs, outputs)
 
 
-class Gather(BaseModule):
-    """This module imports the *GatherOp* from backend.
+class Stack(BaseModule):
+    """This module imports the *StackOp* from backend.
+
+    Stack the inputs along the given axis.
+
+    """
+    def __init__(self, key, dev, **kwargs):
+        super(Stack, self).__init__(key, dev, **kwargs)
+        self.axis = kwargs.get('axis', 0)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {
+            'op_type': 'Stack',
+            'arguments': {
+                'axis': self.axis
+            },
+        }
+
+    def forward(self, xs, y):
+        inputs = xs; self.unify_devices(inputs)
+        outputs = [y] if y else [self.register_output()]
+        return self.run(inputs, outputs)
+
+
+class Chunk(BaseModule):
+    """This module imports the *SliceOp* from backend.
+
+    Slice the inputs into several parts along the given axis.
+
+    """
+    def __init__(self, key, dev, **kwargs):
+        super(Chunk, self).__init__(key, dev, **kwargs)
+        self.axis = kwargs.get('axis', 0)
+        self.chunks = kwargs.get('chunks', 1)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {
+            'op_type': 'Slice',
+            'arguments': {
+                'axis': self.axis,
+            },
+        }
+
+    def forward(self, x):
+        inputs = [x]; self.unify_devices(inputs)
+        outputs = [self.register_output() for _ in range(self.chunks)]
+        return self.run(inputs, outputs)
+
+
+class IndexSelect(BaseModule):
+    """This module imports the *IndexSelectOp* from backend.
 
     Gather the input according to the indices along the given axis,
     and the resulting shape should be:
@@ -127,13 +142,13 @@ class Gather(BaseModule):
 
     """
     def __init__(self, key, dev, **kwargs):
-        super(Gather, self).__init__(key, dev, **kwargs)
+        super(IndexSelect, self).__init__(key, dev, **kwargs)
         self.axis = kwargs.get('axis', 0)
         self.register_op()
 
     def register_op(self):
         self.op_meta = {
-            'op_type': 'Gather',
+            'op_type': 'IndexSelect',
             'arguments': {
                 'axis': self.axis,
             },
@@ -141,6 +156,23 @@ class Gather(BaseModule):
 
     def forward(self, x, indices, y):
         inputs = [x, indices]; self.unify_devices(inputs)
+        outputs = [y] if y else [self.register_output()]
+        return self.run(inputs, outputs)
+
+
+class MaskedSelect(BaseModule):
+    def __init__(self, key, dev, **kwargs):
+        super(MaskedSelect, self).__init__(key, dev, **kwargs)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {
+            'op_type': 'MaskedSelect',
+            'arguments': {},
+        }
+
+    def forward(self, x, mask, y):
+        inputs = [x, mask]; self.unify_devices(inputs)
         outputs = [y] if y else [self.register_output()]
         return self.run(inputs, outputs)
 
@@ -175,18 +207,19 @@ class ArgReduce(BaseModule):
         self.operation = kwargs.get('operation', 'ARGMAX')
         self.axis = kwargs.get('axis', None)
         self.keepdim = kwargs.get('keepdim', True)
-        self.top_k = kwargs.get('top_k', 1)
+        self.topk = kwargs.get('topk', 1)
         self.register_op()
 
     def register_op(self):
         self.op_meta = {
             'op_type': 'ArgReduce',
             'arguments': {
-                'operation': self.operation if 'ARG' in self.operation \
+                'operation': self.operation
+                    if 'ARG' in self.operation \
                     else 'ARG' + self.operation,
                 'axis': self.axis if self.axis else 2147483647,
                 'keep_dims': self.keepdim,
-                'top_k': self.top_k,
+                'top_k': self.topk,
             },
         }
 
@@ -216,7 +249,7 @@ class ArgReduce(BaseModule):
 class Reshape(BaseModule):
     def __init__(self, key, dev, **kwargs):
         super(Reshape, self).__init__(key, dev, **kwargs)
-        self.n_dim = kwargs.get('n_dim', 0)
+        self.ndim = kwargs.get('ndim', 0)
         self.register_op()
 
     def register_op(self):
@@ -224,20 +257,20 @@ class Reshape(BaseModule):
             'op_type': 'Reshape',
             'arguments': {
                 'dims_desc': [
-                    '${{ANCHOR}}/dims[{}]'.format(n)
-                        for n in range(self.n_dim)
+                    '${{HANDLE}}/dims[{}]'.format(n)
+                        for n in range(self.ndim)
                 ],
             },
         }
 
-    def update_arguments(self, A, shape):
+    def update_args(self, A, shape):
         for i, e in enumerate(shape):
-            self.set_argument_i64('{}/dims[{}]'.format(A, i), e)
+            self.set_arg_i64('{}/dims[{}]'.format(A, i), e)
 
     def forward(self, x, shape):
         inputs = [x]; self.unify_devices(inputs)
         outputs = [_ReferenceTensor(x)]
-        callback = lambda A: self.update_arguments(A, shape)
+        callback = lambda A: self.update_args(A, shape)
         return self.run(inputs, outputs, callback=callback)
 
 
@@ -250,7 +283,9 @@ class Squeeze(BaseModule):
     def register_op(self):
         self.op_meta = {
             'op_type': 'Squeeze',
-            'arguments': {'axis': self.dim},
+            'arguments': {
+                'axis': self.dim,
+            },
         }
 
     def forward(self, x, out=None):
@@ -268,7 +303,9 @@ class UnSqueeze(BaseModule):
     def register_op(self):
         self.op_meta = {
             'op_type': 'ExpandDims',
-            'arguments': {'axis': self.dim},
+            'arguments': {
+                'axis': self.dim,
+            },
         }
 
     def forward(self, x, out=None):
@@ -280,34 +317,56 @@ class UnSqueeze(BaseModule):
 class Permute(BaseModule):
     def __init__(self, key, dev, **kwargs):
         super(Permute, self).__init__(key, dev, **kwargs)
-        self.n_perm = kwargs.get('n_perm', 0)
+        self.nperm = kwargs.get('nperm', 0)
         self.register_op()
 
     def register_op(self):
         self.op_meta = {
             'op_type': 'Transpose',
             'arguments': {
-                'perm_desc': ['${{ANCHOR}}/perm[{}]'.format(n)
-                    for n in range(self.n_perm)],
+                'perm_desc': ['${{HANDLE}}/perm[{}]'.format(n)
+                    for n in range(self.nperm)],
             },
         }
 
-    def update_arguments(self, A, perm):
+    def update_args(self, A, perm):
         if perm:
             for i, e in enumerate(perm):
-                self.set_argument_i64('{}/perm[{}]'.format(A, i), e)
+                self.set_arg_i64('{}/perm[{}]'.format(A, i), e)
 
     def forward(self, x, perm):
         inputs = [x]; self.unify_devices(inputs)
         outputs = [self.register_output()]
-        callback = lambda A: self.update_arguments(A, perm)
+        callback = lambda A: self.update_args(A, perm)
         return self.run(inputs, outputs, callback=callback)
+
+
+class ChannelShuffle(BaseModule):
+    def __init__(self, key, dev, **kwargs):
+        super(ChannelShuffle, self).__init__(key, dev, **kwargs)
+        self.axis = kwargs.get('axis', 0)
+        self.group = kwargs.get('group', 1)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {
+            'op_type': 'ChannelShuffle',
+            'arguments': {
+                'axis': self.axis,
+                'group': self.group,
+            },
+        }
+
+    def forward(self, x, y):
+        inputs = [x]; self.unify_devices(inputs)
+        outputs = [y] if y else [self.register_output()]
+        return self.run(inputs, outputs)
 
 
 class Repeat(BaseModule):
     def __init__(self, key, dev, **kwargs):
         super(Repeat, self).__init__(key, dev, **kwargs)
-        self.n_times = kwargs.get('n_times', 0)
+        self.ntimes = kwargs.get('ntimes', 0)
         self.register_op()
 
     def register_op(self):
@@ -315,21 +374,51 @@ class Repeat(BaseModule):
             'op_type': 'Tile',
             'arguments': {
                 'multiples_desc': [
-                    '${{ANCHOR}}/multiples[{}]'.format(n)
-                        for n in range(self.n_times)
+                    '${{HANDLE}}/multiples[{}]'.format(n)
+                        for n in range(self.ntimes)
                 ],
             },
         }
 
-    def update_arguments(self, A, times):
+    def update_args(self, A, times):
         for i, d in enumerate(times):
-            self.set_argument_i64('{}/multiples[{}]'.format(A, i), d)
+            self.set_arg_i64('{}/multiples[{}]'.format(A, i), d)
 
     def forward(self, x, times):
         inputs = [x]; self.unify_devices(inputs)
         outputs = [self.register_output()]
-        callback = lambda A: self.update_arguments(A, times)
+        callback = lambda A: self.update_args(A, times)
         return self.run(inputs, outputs, callback=callback)
+
+
+class NonZero(BaseModule):
+    def __init__(self, key, dev, **kwargs):
+        super(NonZero, self).__init__(key, dev, **kwargs)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {
+            'op_type': 'NonZero',
+            'arguments': {},
+        }
+
+    def forward(self, x, y):
+        inputs = [x]; self.unify_devices(inputs)
+        outputs = [y] if y else [self.register_output()]
+        with no_grad(): return self.run(inputs, outputs)
+
+
+class Where(BaseModule):
+    def __init__(self, key, dev, **kwargs):
+        super(Where, self).__init__(key, dev, **kwargs)
+        self.register_op()
+
+    def register_op(self):
+        self.op_meta = {'op_type': 'Where', 'arguments': {}}
+
+    def forward(self, condition, x, y):
+        self.unify_devices([condition, x, y])
+        return self.run([x, y, condition], [self.register_output()])
 
 
 class OneHot(BaseModule):
@@ -383,16 +472,17 @@ class Cast(BaseModule):
 class Multinomial(BaseModule):
     def __init__(self, key, dev, **kwargs):
         super(Multinomial, self).__init__(key, dev, **kwargs)
+        self.eps = kwargs.get('eps', 0)
         self.num_samples = kwargs.get('num_samples', 1)
-        self.normalize = kwargs.get('normalize', False)
         self.register_op()
 
     def register_op(self):
         self.op_meta = {
             'op_type': 'Multinomial',
             'arguments': {
+                'eps': float(self.eps),
                 'num_samples': self.num_samples,
-                'normalize': self.normalize,
+                'normalize': False,
             },
         }
 

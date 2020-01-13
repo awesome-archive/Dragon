@@ -14,11 +14,15 @@
 #define DRAGON_CORE_TYPES_H_
 
 #include <cstdint>
+#include <vector>
 #include <unordered_map>
 
 #include "core/typeid.h"
 
 namespace dragon {
+
+typedef std::vector<int> vec32_t;
+typedef std::vector<int64_t> vec64_t;
 
 #ifdef _MSC_VER
 
@@ -67,6 +71,11 @@ inline const std::string TypeMetaToString(
     };
     return m2s_type_map.count(meta.id()) ?
         m2s_type_map[meta.id()] : "unknown";
+}
+
+template<typename T>
+inline const std::string TypeToString() {
+    return TypeMetaToString(TypeMeta::Make<T>());
 }
 
 }  // namespace dragon

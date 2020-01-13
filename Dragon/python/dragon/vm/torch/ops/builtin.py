@@ -17,11 +17,14 @@ from dragon.core import mpi
 from dragon.vm.torch.tensor import Tensor, _LeafTensor, _Device
 from dragon.vm.torch.ops.primitive import MakeDevice, WrapScalar
 from dragon.vm.torch.ops.factory import get_module
-from dragon.vm.torch.ops.modules.control_flow import Compare
+
+from dragon.vm.torch.ops.modules.control_flow import (
+    Assign, MaskedAssign, Compare
+)
 
 from dragon.vm.torch.ops.modules.arithmetic import (
-    Fundamental, Log, Exp, Sqrt,
-    Accumulate,
+    Fundamental, Accumulate,
+    Log, Exp, Sqrt,
     MM, FullyConnected,
     Maximum, Minimum, Clamp,
 )
@@ -31,9 +34,12 @@ from dragon.vm.torch.ops.modules.init import (
 )
 
 from dragon.vm.torch.ops.modules.array import (
-    Reshape, Squeeze, UnSqueeze, Permute,
-    Indexing, Assigning, Repeat, Concat, Gather,
-    Reduce, ArgReduce, OneHot, Multinomial,
+    Reshape, Squeeze, UnSqueeze, Permute, 
+    ChannelShuffle, Repeat, Concat, Stack, Chunk,
+    Indexing, IndexSelect, MaskedSelect,
+    Reduce, ArgReduce,
+    NonZero, Where,
+    OneHot, Multinomial,
 )
 
 from dragon.vm.torch.ops.modules.update import (
@@ -46,19 +52,23 @@ from dragon.vm.torch.ops.modules.vision import (
 
 
 __all__ = [
-    'add', 'sub', 'mul', 'div',
-    'accumulate',
+    'add', 'sub', 'mul', 'div', 'accumulate',
     'maximum', 'minimum', 'clamp',
     'log', 'exp', 'sqrt',
     'mm', 'xw_plus_b',
     'squeeze', 'unsqueeze',
     'mean', 'sum', 'min', 'max', 'topk',
-    'argmin', 'argmax',
-    'gt', 'lt', 'eq', 'ge', 'le',
-    'cat', 'gather', 'narrow',
-    'one_hot', 'multinomial', 'rand', 'randn',
-    'zeros', 'zeros_like', 'ones', 'ones_like',
-    'nn_resize', 'bilinear_resize', 'roi_pool', 'roi_align',
+    'nonzero', 'where', 'argmin', 'argmax',
+    'gt', 'lt', 'eq', 'ne', 'ge', 'le',
+    'cat', 'stack', 'chunk',
+    'narrow', 'channel_shuffle',
+    'index_select', 'masked_select',
+    'one_hot', 'multinomial',
+    'rand', 'randn',
+    'ones', 'ones_like',
+    'zeros', 'zeros_like',
+    'nn_resize', 'bilinear_resize',
+    'roi_pool', 'roi_align',
 ]
 
 
@@ -406,52 +416,64 @@ def xw_plus_b(x, w, bias=None, transW=True, out=None):
 
 def _reshape(input, shape, shape_like=None):
     if shape_like is not None: shape = shape_like.shape
-    dev = MakeDevice(inputs=[input]); n_dim = len(shape)
-    key = 'Reshape/{}/n_dim:{}'.format(dev, n_dim)
-    module = get_module(Reshape, key, dev, n_dim=n_dim)
+    dev = MakeDevice(inputs=[input]); ndim = len(shape)
+    key = 'Reshape/{}/ndim:{}'.format(dev, ndim)
+    module = get_module(Reshape, key, dev, ndim=ndim)
     return module.forward(input, shape)
 
 
 def _permute(input, perm):
-    dev = MakeDevice(inputs=[input]); n_perm = len(perm)
-    key = 'Permute/{}/n_perm:{}'.format(dev, n_perm)
-    module = get_module(Permute, key, dev, n_perm=n_perm)
+    dev, nperm = MakeDevice([input]), len(perm)
+    key = 'Permute/{}/nperm:{}'.format(dev, nperm)
+    module = get_module(Permute, key, dev, nperm=nperm)
     return module.forward(input, perm)
 
 
 def _repeat(input, times):
-    dev = MakeDevice(inputs=[input]); n_times = len(times)
-    key = 'Repeat/{}/n_times:{}'.format(dev, n_times)
-    module = get_module(Repeat, key, dev, n_times=n_times)
+    dev = MakeDevice(inputs=[input]); ntimes = len(times)
+    key = 'Repeat/{}/ntimes:{}'.format(dev, ntimes)
+    module = get_module(Repeat, key, dev, ntimes=ntimes)
     return module.forward(input, times)
 
 
 def _fill(input, shape, value):
-    dev = MakeDevice(inputs=[input]); n_dim = len(shape)
-    key = 'Fill/{}/dtype:{}/n_dim:{}/value:{}'.format(
-        dev, input.dtype, n_dim, value)
-    module = get_module(Fill, key, dev, n_dim=n_dim,
-        value=value, dtype=input.dtype)
+    dev = MakeDevice(inputs=[input]); ndim = len(shape)
+    key = 'Fill/{}/dtype:{}/ndim:{}/value:{}' \
+        .format(dev, input.dtype, ndim, value)
+    module = get_module(
+        Fill, key, dev,
+        ndim=ndim,
+        value=value,
+        dtype=input.dtype,
+    )
     return module.forward(input, shape)
 
 
 def _uniform(input, shape, low, high):
-    dev = MakeDevice(inputs=[input]); n_dim = len(shape)
-    key = 'Uniform/{}/dtype:{}/n_dim:{}/low:{}/high:{}'.format(
-        dev, input.dtype, n_dim, float(low), float(high))
+    dev = MakeDevice(inputs=[input]); ndim = len(shape)
+    key = 'Uniform/{}/dtype:{}/ndim:{}/low:{}/high:{}'.format(
+        dev, input.dtype, ndim, float(low), float(high))
     module = get_module(
-        RandomUniform, key, dev, n_dim=n_dim,
-            low=low, high=high, dtype=input.dtype)
+        RandomUniform, key, dev,
+        ndim=ndim,
+        low=low,
+        high=high,
+        dtype=input.dtype,
+    )
     return module.forward(input, shape)
 
 
 def _normal(input, shape, mean, std):
-    dev = MakeDevice(inputs=[input]); n_dim = len(shape)
-    key = 'Normal/{}/dtype:{}/n_dim:{}/mean:{}/std:{}'.format(
-        dev, input.dtype, n_dim, float(mean), float(std))
+    dev = MakeDevice(inputs=[input]); ndim = len(shape)
+    key = 'Normal/{}/dtype:{}/ndim:{}/mean:{}/std:{}'.format(
+        dev, input.dtype, ndim, float(mean), float(std))
     module = get_module(
-        RandomNormal, key, dev, n_dim=n_dim,
-            mean=mean, std=std, dtype=input.dtype)
+        RandomNormal, key, dev,
+        ndim=ndim,
+        mean=mean,
+        std=std,
+        dtype=input.dtype,
+    )
     return module.forward(input, shape)
 
 
@@ -461,42 +483,84 @@ def _reduce(input, operation, dim=None, keepdim=False, out=None):
     key = '{}/{}/dim:{}/keepdim:{}'.format(
         operation, dev, dim, int(keepdim))
     module = get_module(
-        Reduce, key, dev, operation=operation,
-            dim=dim, keepdim=keepdim)
+        Reduce, key, dev,
+        dim=dim,
+        keepdim=keepdim,
+        operation=operation,
+    )
     return module.forward(input, out)
 
 
-def _arg_reduce(input, operation, dim=None, keepdim=False, top_k=1, out=None):
+def _arg_reduce(input, operation, dim=None, keepdim=False, topk=1, out=None):
     if dim is None: keepdim = False
     dev = MakeDevice(inputs=[input])
-    key = '{}/{}/dim:{}/keepdim:{}/top_k:{}'.format(
-        operation, dev, dim, int(keepdim), top_k)
+    key = '{}/{}/dim:{}/keepdim:{}/topk:{}'.format(
+        operation, dev, dim, int(keepdim), topk)
     module = get_module(
         ArgReduce, key, dev,
-            operation=operation, axis=dim,
-                keepdim=keepdim, top_k=top_k)
+        axis=dim,
+        topk=topk,
+        keepdim=keepdim,
+        operation=operation,
+    )
     return module.forward(input, out)
 
 
-def _indexing(input, starts, sizes):
-    n_starts, n_sizes = len(starts), len(sizes)
+def _index(input, starts, sizes):
+    nstarts, nsizes = len(starts), len(sizes)
     dev = MakeDevice(inputs=[input])
-    key = 'Index/{}/n_starts:{}/n_sizes:{}'.format(dev, n_starts, n_sizes)
-    module = get_module(Indexing, key, dev, n_starts=n_starts, n_sizes=n_sizes)
+    key = 'Index/{}/nstarts:{}/nsizes:{}'.format(dev, nstarts, nsizes)
+    module = get_module(Indexing, key, dev, nstarts=nstarts, nsizes=nsizes)
     return module.forward(input, starts, sizes)
 
 
-def _assigning(output, input, starts, sizes):
+def _assign(output, starts, sizes, input):
     if not isinstance(input, Tensor):
         if isinstance(input, (tuple, list)):
             input = Tensor(input, dtype=output.dtype, device=output.device)
         else:
             input = WrapScalar(input, output.dtype, output.device)
-    n_starts, n_sizes = len(starts), len(sizes)
+    nstarts, nsizes = len(starts), len(sizes)
     dev = MakeDevice(inputs=[input])
-    key = 'Assign/{}/n_starts:{}/n_sizes:{}'.format(dev, n_starts, n_sizes)
-    module = get_module(Assigning, key, dev, n_starts=n_starts, n_sizes=n_sizes)
+    key = 'Assign/{}/nstarts:{}/nsizes:{}'.format(dev, nstarts, nsizes)
+    module = get_module(Assign, key, dev, nstarts=nstarts, nsizes=nsizes)
     return module.forward(input, output, starts, sizes)
+
+
+def where(condition, x, y):
+    """Select elements from either ``x`` or ``y``, depending on ``condition``.
+
+    Parameters
+    ----------
+    condition : dragon.vm.torch.Tensor
+        The byte condition tensor.
+    x : dragon.vm.torch.Tensor
+        The elements for *1*.
+    y : dragon.vm.torch.Tensor
+        The elements for *0*.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output tensor.
+
+    """
+    dev = MakeDevice(inputs=[condition, x, y])
+    key = 'Where/{}'.format(dev)
+    module = get_module(Where, key, dev)
+    return module.forward(condition, x, y)
+
+
+def _masked_assign(output, mask, input):
+    if not isinstance(input, Tensor):
+        if isinstance(input, (tuple, list)):
+            input = Tensor(input, dtype=output.dtype, device=output.device)
+        else:
+            input = WrapScalar(input, output.dtype, output.device)
+    dev = MakeDevice(inputs=[input])
+    key = 'MaskedAssign/{}'.format(dev)
+    module = get_module(MaskedAssign, key, dev)
+    return module.forward(input, output, mask)
 
 
 def _compare(input, other, operation, out=None):
@@ -513,7 +577,9 @@ def squeeze(input, dim=None, out=None):
 
     Parameters
     ----------
-    dim : int
+    input : dragon.vm.torch.Tensor
+        The input tensor.
+    dim : int, optional
         The optional dim to remove.
     out : dragon.vm.torch.Tensor, optional
         The output tensor.
@@ -531,10 +597,12 @@ def squeeze(input, dim=None, out=None):
 
 
 def unsqueeze(input, dim, out=None):
-    """Returns a tensor with a dimension of size 1 inserted at the specified position.
+    """Return a tensor with a dimension of size 1 inserted at the specified position.
 
     Parameters
     ----------
+    input : dragon.vm.torch.Tensor
+        The input tensor.
     dim : int
         The dim to remove.
     out : dragon.vm.torch.Tensor, optional
@@ -793,7 +861,7 @@ def le(input, other, out=None):
     ----------
     input : dragon.vm.torch.Tensor
         The input tensor.
-    other : dragon.vm.torch.Tensor, number
+    other : dragon.vm.torch.Tensor or number
         The other tensor.
     out : dragon.vm.torch.Tensor, optional
         The optional output tensor.
@@ -814,7 +882,7 @@ def eq(input, other, out=None):
     ----------
     input : dragon.vm.torch.Tensor
         The input tensor.
-    other : dragon.vm.torch.Tensor, number
+    other : dragon.vm.torch.Tensor or number
         The other tensor.
     out : dragon.vm.torch.Tensor, optional
         The optional output tensor.
@@ -826,6 +894,27 @@ def eq(input, other, out=None):
 
     """
     return _compare(input, other, 'EQ', out)
+
+
+def ne(input, other, out=None):
+    """Compute *input* != *other* element-wise.
+
+    Parameters
+    ----------
+    input : dragon.vm.torch.Tensor
+        The input tensor.
+    other : dragon.vm.torch.Tensor or number
+        The other tensor.
+    out : dragon.vm.torch.Tensor, optional
+        The optional output tensor.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output byte tensor.
+
+    """
+    return _compare(input, other, 'NE', out)
 
 
 def cat(seq, dim=0, out=None):
@@ -846,18 +935,92 @@ def cat(seq, dim=0, out=None):
         The output tensor.
 
     """
-    dev = MakeDevice(inputs=seq, outputs=[out] if out else [])
+    dev = MakeDevice(seq, [out] if out else [])
     key = 'Concat/{}/dim:{}'.format(dev, dim)
     module = get_module(Concat, key, dev, axis=dim)
     return module.forward(seq, out)
 
 
-def gather(input, dim, index, out=None):
-    """Gather the input values along the given axis.
+def stack(seq, dim=0, out=None):
+    """Stack the inputs along the given axis.
 
-    Note that it is a tensorflow style gather, which takes a vector index,
+    Parameters
+    ----------
+    seq : sequence of dragon.vm.torch.Tensor
+        The sequence.
+    dim : int, optional, default=0
+        The dim to stack.
+    out : dragon.vm.torch.Tensor, optional
+        The optional output tensor.
 
-    values of other dimension will be copied automatically.
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output tensor.
+
+    """
+    dev = MakeDevice(seq, [out] if out else [])
+    key = 'Stack/{}/dim:{}'.format(dev, dim)
+    module = get_module(Stack, key, dev, axis=dim)
+    return module.forward(seq, out)
+
+
+def channel_shuffle(input, dim=0, group=1, out=None):
+    """Shuffle channels between groups along the given axis.
+
+    Parameters
+    ----------
+    input : dragon.vm.torch.Tensor
+        The input tensor.
+    dim : int, optional, default=0
+        The axis of channels.
+    group : int, optional, default=1
+        The number of groups.
+    out : dragon.vm.torch.Tensor, optional
+        The output tensor.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The new tensor.
+
+    """
+    dev = MakeDevice([input])
+    key = 'ChannelShuffle/{}/dim:{}/group:{}'.format(dev, dim, group)
+    module = get_module(
+        ChannelShuffle, key, dev, 
+        axis=dim,
+        group=group,
+    )
+    return module.forward(input, out)
+
+
+def chunk(tensor, chunks, dim=0):
+    """Split the input into several parts along the given axis.
+
+    Parameters
+    ----------
+    tensor : dragon.vm.torch.Tensor
+        The input to split.
+    chunks : int
+        The number of chunks to split.
+    dim : int, optional, default=0
+        The dim to split.
+
+    Returns
+    -------
+    sequence of dragon.vm.torch.Tensor
+        The output chunks.
+
+    """
+    dev = MakeDevice([tensor])
+    key = 'Chunk/{}/chunks:{}/dim:{}'.format(dev, chunks, dim)
+    module = get_module(Chunk, key, dev, axis=dim, chunks=chunks)
+    return module.forward(tensor)
+
+
+def index_select(input, dim, index, out=None):
+    """Select the input values along the given axis using index.
 
     Parameters
     ----------
@@ -876,12 +1039,34 @@ def gather(input, dim, index, out=None):
         The output tensor.
 
     """
-    dev = MakeDevice(
-        inputs=[input, index],
-            outputs=[out] if out else [])
-    key = 'Gather/{}/dim:{}'.format(dev, dim)
-    module = get_module(Gather, key, dev, axis=dim)
+    dev = MakeDevice([input, index], [out] if out else [])
+    key = 'IndexSelect/{}/dim:{}'.format(dev, dim)
+    module = get_module(IndexSelect, key, dev, axis=dim)
     return module.forward(input, index, out)
+
+
+def masked_select(input, mask, out=None):
+    """Select the input values where mask is *1*.
+
+    Parameters
+    ----------
+    input : dragon.vm.torch.Tensor
+        The values.
+    mask : dragon.vm.torch.Tensor
+        The mask to select values.
+    out : dragon.vm.torch.Tensor, optional
+        The optional output tensor.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output tensor.
+
+    """
+    dev = MakeDevice([input, mask], [out] if out else [])
+    key = 'MaskedSelect/{}'.format(dev)
+    module = get_module(MaskedSelect, key, dev)
+    return module.forward(input, mask, out)
 
 
 def narrow(input, dimension, start, length):
@@ -906,7 +1091,29 @@ def narrow(input, dimension, start, length):
     """
     sizes = list(input.shape[:]); starts = [0] * len(sizes)
     starts[dimension], sizes[dimension] = start, length
-    return _indexing(input, starts, sizes)
+    return _index(input, starts, sizes)
+
+
+def nonzero(input, out=None):
+    """Return the indices of non-zero elements.
+
+    Parameters
+    ----------
+    input : dragon.vm.torch.Tensor
+        The input tensor.
+    out : dragon.vm.torch.Tensor, optional
+        The optional output tensor.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output tensor.
+
+    """
+    dev = MakeDevice(inputs=[input])
+    key = 'NonZero/{}'.format(dev)
+    module = get_module(NonZero, key, dev)
+    return module.forward(input, out)
 
 
 def one_hot(input, depth):
@@ -921,7 +1128,7 @@ def one_hot(input, depth):
 
     Returns
     -------
-    dragon.vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -931,7 +1138,7 @@ def one_hot(input, depth):
     return module.forward(input)
 
 
-def multinomial(input, num_samples, normalize=False, out=None):
+def multinomial(input, num_samples, eps=0., out=None):
     """Return a tensor where each row contains ``num_samples``,
      sampled from the multinomial distribution.
 
@@ -941,8 +1148,8 @@ def multinomial(input, num_samples, normalize=False, out=None):
         The input tensor.
     num_samples : int
         The number of samples.
-    normalize : boolean, optional, default=False
-        Whether to normalize the inputs.
+    eps : float, optional, default=0.
+        The prob to a uniform sampling.
 
     Returns
     -------
@@ -951,12 +1158,14 @@ def multinomial(input, num_samples, normalize=False, out=None):
 
     """
     dev = MakeDevice(inputs=[input])
-    key = 'Multinomial/{}/num_samples:{}/normalize:{}'.format(
-        dev, num_samples, normalize)
+    key = 'Multinomial/{}' \
+          '/num_samples:{}' \
+          '/eps:{}'.format(dev, num_samples, eps)
     module = get_module(
         Multinomial, key, dev,
-            num_samples=num_samples,
-                normalize=normalize)
+        eps=eps,
+        num_samples=num_samples,
+    )
     return module.forward(input, out)
 
 
@@ -987,7 +1196,7 @@ def zeros(*sizes, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1008,7 +1217,7 @@ def zeros_like(input, out=None, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1030,7 +1239,7 @@ def ones(*sizes, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1051,7 +1260,7 @@ def ones_like(input, out=None, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1073,7 +1282,7 @@ def rand(*sizes, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1094,7 +1303,7 @@ def randn(*sizes, **kwargs):
 
     Returns
     -------
-    vm.torch.FloatTensor
+    dragon.vm.torch.Tensor
         The output tensor.
 
     """
@@ -1128,12 +1337,23 @@ def _allreduce(grads):
     return module.forward(grads)
 
 
-def _update(param, grad, op_type, slot,
-            lr_mult=1.0, decay_mult=1.0):
+def _update(
+    param,
+    grad,
+    op_type,
+    slot,
+    lr_mult=1.0,
+    decay_mult=1.0,
+):
     dev = MakeDevice(inputs=[param])
     key = '{}/{}/{}/{}'.format(op_type, dev, slot, param.name)
-    module = get_module(Update, key, dev, op_type=op_type,
-        lr_mult=lr_mult, decay_mult=decay_mult, slot=slot)
+    module = get_module(
+        Update, key, dev,
+        op_type=op_type,
+        lr_mult=lr_mult,
+        decay_mult=decay_mult,
+        slot=slot,
+    )
     return module.forward(param, grad)
 
 
@@ -1156,8 +1376,12 @@ def _resize_2d(input, op_type, dsize, fx, fy):
     dev = MakeDevice(inputs=[input])
     key = '{}/{}/dsize:{}/fx:{}/fy:{}'.format(
         op_type, dev, '2' if dsize else 'none', fx, fy)
-    module = get_module(Resize2d, key, dev,
-        op_type=op_type, dsize=dsize, fx=fx, fy=fy)
+    module = get_module(
+        Resize2d, key, dev,
+        dsize=dsize,
+        fx=fx, fy=fy,
+        op_type=op_type,
+    )
     return module.forward(input, dsize)
 
 
@@ -1169,26 +1393,55 @@ def bilinear_resize(input, dsize, fx=-1.0, fy=-1.0):
     return _resize_2d(input, 'BilinearResize', dsize, fx, fy)
 
 
-def roi_pool(feature, rois, pooled_h, pooled_w, spatial_scale):
+def roi_pool(
+    feature,
+    rois,
+    pooled_h,
+    pooled_w,
+    spatial_scale,
+):
     dev = MakeDevice(inputs=[feature])
-    key = 'RoIPool/{}/pool_h:{}/pool_w:{}/spatial_scale:{}'.format(
-        dev, pooled_h, pooled_w, spatial_scale)
+    key = 'RoIPool/{}' \
+          '/pool_h:{}' \
+          '/pool_w:{}' \
+          '/spatial_scale:{}' \
+        .format(dev,
+                pooled_h,
+                pooled_w,
+                spatial_scale)
     module = get_module(
         RoIPool, key, dev,
-            pooled_h=pooled_h, pooled_w=pooled_w,
-                spatial_scale=spatial_scale)
+        pooled_h=pooled_h,
+        pooled_w=pooled_w,
+        spatial_scale=spatial_scale,
+    )
     return module.forward(feature, rois)
 
 
-def roi_align(feature, rois, pooled_h, pooled_w,
-              spatial_scale, sampling_ratio=2):
+def roi_align(
+    feature,
+    rois,
+    pooled_h,
+    pooled_w,
+    spatial_scale,
+    sampling_ratio=2,
+):
     dev = MakeDevice(inputs=[feature])
-    key = 'RoIAlign/{}/pool_h:{}/pool_w:{}/' \
-          'spatial_scale:{}/sampling_ratio:{}'.format(
-        dev, pooled_h, pooled_w, spatial_scale, sampling_ratio)
+    key = 'RoIAlign/{}' \
+          '/pool_h:{}' \
+          '/pool_w:{}' \
+          '/spatial_scale:{}' \
+          '/sampling_ratio:{}' \
+        .format(dev,
+                pooled_h,
+                pooled_w,
+                spatial_scale,
+                sampling_ratio)
     module = get_module(
         RoIAlign, key, dev,
-            pooled_h=pooled_h, pooled_w=pooled_w,
-                spatial_scale=spatial_scale,
-                    sampling_ratio=sampling_ratio)
+        pooled_h=pooled_h,
+        pooled_w=pooled_w,
+        spatial_scale=spatial_scale,
+        sampling_ratio=sampling_ratio,
+    )
     return module.forward(feature, rois)

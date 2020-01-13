@@ -52,7 +52,6 @@ def Cast(inputs, dtype='float32', inplace=False, **kwargs):
     if inplace:
         arguments['inputs'] = []
         arguments['existing_outputs'] = [inputs]
-
     return Tensor.CreateOperator('Cast', **arguments)
 
 
@@ -130,7 +129,7 @@ def Accuracy(inputs, top_k=1, axis=1, ignore_labels=(), **kwargs):
 
     **Type Constraints**:
 
-    * logits (*float16*, *float32*)
+    * logits (*float32*)
 
     * labels (*float32*, *int64*)
 

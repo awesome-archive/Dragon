@@ -16,9 +16,33 @@ from __future__ import print_function
 from . import *
 
 
+@OpSchema.Inputs(1, 3)
+def Where(inputs, **kwargs):
+    """Select elements from either ``x`` or ``y``, depending on ``condition``.
+
+    Return the indices of *True* elements, if only the ``condition`` is given.
+
+    **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
+
+    Parameters
+    ----------
+    inputs : sequence of Tensor
+        The ``x``, ``y``, and ``condition``.
+
+    Returns
+    -------
+    dragon.vm.torch.Tensor
+        The output tensor.
+
+    """
+    if isinstance(inputs, Tensor) or len(inputs) == 1:
+        return NonZero(inputs, **kwargs)
+    return Tensor.CreateOperator('Where', **ParseArgs(locals()))
+
+
 @OpSchema.Inputs(1)
-def Gather(inputs, indices, axis=0, **kwargs):
-    """Gather the input according to the indices along the given axis.
+def IndexSelect(inputs, indices, axis=0, **kwargs):
+    """Select the elements according to the indices along the given axis.
 
     **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
 
@@ -26,10 +50,10 @@ def Gather(inputs, indices, axis=0, **kwargs):
     ----------
     inputs : Tensor
         The input tensor.
-    indices : int, sequence of (number, Tensor)
-        The indices to form output tensor.
-    axis : int, optional
-        The start axis, can be negative.
+    indices : sequence or Tensor
+        The indices to select elements.
+    axis : int, optional, default=0
+        The axis of indices.
 
     Returns
     -------
@@ -38,19 +62,49 @@ def Gather(inputs, indices, axis=0, **kwargs):
 
     """
     arguments = ParseArgs(locals())
+    if not isinstance(indices, Tensor):
+        indices = Tensor.convert_to(indices, 'int64')
     arguments['inputs'], arguments['indices'] = \
-        [arguments['inputs'], Tensor.Convert(
-            indices, dtype='int64')], None
-    return Tensor.CreateOperator('Gather', **arguments)
+        [arguments['inputs'], indices], None
+    return Tensor.CreateOperator('IndexSelect', **arguments)
+
+
+@OpSchema.Inputs(1)
+def MaskedSelect(inputs, mask, **kwargs):
+    """Select the the elements where ``mask`` is *1*.
+
+    **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
+
+    Parameters
+    ----------
+    inputs : Tensor
+        The input tensor.
+    mask : Tensor
+        The mask, with the same size as ``inputs``.
+
+    Returns
+    -------
+    Tensor
+        The output tensor.
+
+    """
+    arguments = ParseArgs(locals())
+    arguments['mask'] = None
+    arguments['inputs'] = [arguments['inputs'], mask]
+    return Tensor.CreateOperator('MaskedSelect', **arguments)
 
 
 @OpSchema.Inputs(1)
 @ArgumentHelper.RepeatedDesc('starts')
 @ArgumentHelper.RepeatedDesc('sizes')
 def Crop(
-    inputs, starts=None, sizes=None,
-        start_axis=None, offsets=None,
-            shape_like=None, **kwargs
+    inputs,
+    starts=None,
+    sizes=None,
+    start_axis=None,
+    offsets=None,
+    shape_like=None,
+    **kwargs
 ):
     """Crop the input according to the given starts and sizes.
 
@@ -102,14 +156,12 @@ def Crop(
 
 
 @OpSchema.Inputs(1)
-def Slice(inputs, axis=0, num_outputs=1, slice_points=None, **kwargs):
+def Slice(inputs, axis=0, num_slices=1, slice_points=None, **kwargs):
     """Slice the inputs into several parts along the given axis.
 
     All dimensions except the specified ``axis`` should be same.
 
     The number of ``slice_points`` should be *len(X.shape) - 1*.
-
-    if ``slice_points`` is *None*, dimension of axis should be divided by ``num_outputs``.
 
     **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
 
@@ -117,10 +169,10 @@ def Slice(inputs, axis=0, num_outputs=1, slice_points=None, **kwargs):
     ----------
     inputs : Tensor
         The input tensor.
-    axis : int, optional
+    axis : int, optional, default=0
         The axis to slice, can be negative.
-    num_outputs : int, optional
-        The optional number number of slices.
+    num_slices: int, optional, default=1
+        The optional number of slices.
     slice_points : sequence of int, optional
         The optional slice points.
 
@@ -130,9 +182,12 @@ def Slice(inputs, axis=0, num_outputs=1, slice_points=None, **kwargs):
         The outputs.
 
     """
-    if slice_points is not None and len(slice_points) > 0:
-        num_outputs = len(slice_points) + 1
-    return Tensor.CreateOperator('Slice', **ParseArgs(locals()))
+    arguments = ParseArgs(locals())
+    if slice_points is not None:
+        arguments['num_outputs'] = len(slice_points) + 1
+    else:
+        arguments['num_outputs'] = num_slices
+    return Tensor.CreateOperator('Slice', **arguments)
 
 
 @OpSchema.Inputs(1, INT_MAX)
@@ -147,7 +202,7 @@ def Stack(inputs, axis=0, **kwargs):
     ----------
     inputs : sequence of Tensor
         The inputs.
-    axis : int
+    axis : int, optional, default=0
         The axis to stack, can be negative.
 
     Returns
@@ -171,7 +226,7 @@ def Concat(inputs, axis=0, **kwargs):
     ----------
     inputs : sequence of Tensor
         The inputs.
-    axis : int
+    axis : int, optional, default=0
         The axis to concatenate, can be negative.
 
     Returns
@@ -181,6 +236,30 @@ def Concat(inputs, axis=0, **kwargs):
 
     """
     return Tensor.CreateOperator('Concat', **ParseArgs(locals()))
+
+
+@OpSchema.Inputs(1)
+def ChannelShuffle(inputs, axis=0, group=1, **kwargs):
+    """Shuffle channels between groups along the given axis. `[Zhang et.al, 2017] <https://arxiv.org/abs/1707.01083>`_.
+
+    **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
+
+    Parameters
+    ----------
+    inputs : Tensor
+        The inputs.
+    axis : int, optional, default=0
+        The axis of channels, can be negative.
+    group : int, optional, default=1
+        The number of groups.
+
+    Returns
+    -------
+    Tensor
+        The output tensor.
+
+    """
+    return Tensor.CreateOperator('ChannelShuffle', **ParseArgs(locals()))
 
 
 @OpSchema.Inputs(1)
@@ -274,7 +353,14 @@ def Mean(inputs, axes=None, keep_dims=False, **kwargs):
 
 
 @OpSchema.Inputs(1)
-def _ArgReduce(inputs, axis=None, operation='ARGMAX', top_k=1, keep_dims=False, **kwargs):
+def _ArgReduce(
+    inputs,
+    axis=None,
+    operation='ARGMAX',
+    top_k=1,
+    keep_dims=False,
+    **kwargs
+):
     arguments = ParseArgs(locals())
     arguments['axis'] = arguments['axis'] if arguments else INT_MAX
     return Tensor.CreateOperator('ArgReduce', num_outputs=2, **arguments)
@@ -350,9 +436,9 @@ def ArgMin(inputs, axis=None, top_k=1, keep_dims=False, **kwargs):
         The input tensor.
     axis : int, optional
         The axis to compute, can be negative.
-    top_k : int, optional
+    top_k : int, optional, default=1
         The top k results to keep.
-    keep_dims : bool, optional
+    keep_dims : bool, optional, default=False
         Whether to keep dims after computing.
 
     Returns
@@ -378,9 +464,9 @@ def Min(inputs, axis=None, top_k=1, keep_dims=False, **kwargs):
         The input tensor.
     axis : int, optional
         The axis to compute, can be negative.
-    top_k : int, optional
+    top_k : int, optional, default=1
         The top k results to keep.
-    keep_dims : bool, optional
+    keep_dims : bool, optional, default=False
         Whether to keep dims after computing.
 
     Returns
@@ -433,7 +519,7 @@ def Repeat(inputs, axis=None, repeats=1, **kwargs):
         The input tensor.
     axis : int, optional
         The axis to repeat.
-    repeats : int or Tensor, optional
+    repeats : int or Tensor, optional, default=1
         The magnitude of repeating.
 
     Returns
@@ -525,11 +611,11 @@ def OneHot(inputs, depth, on_value=1, off_value=0, **kwargs):
     inputs : Tensor
         The input tensor.
     depth : int
-        The depth of one-hot representation.
-    on_value : int, optional
-        The value when ``indices[j] = i``.
-    off_value : int, optional
-        The value when ``indices[j] != i``.
+        The depth of representation.
+    on_value : int, optional, default=1
+        The value when *indices[j]* = *i*.
+    off_value : int, optional, default=0
+        The value when *indices[j]* != *i*.
 
     Returns
     -------
@@ -552,12 +638,12 @@ def Flatten(inputs, axis=0, num_axes=-1, keep_axes=None, **kwargs):
     ----------
     inputs : Tensor
         The input tensor.
-    axis : int, optional
+    axis : int, optional, default=0
         The start axis to flatten, can be negative.
-    num_axes : int, optional
-        The number of axes to flatten. Default is ``-1`` (Along all axes).
+    num_axes : int, optional, default=-1
+        The number of axes to flatten.
     keep_axes : int, optional
-        The number of axes to keep. Default is ``None`` (Disabled).
+        The number of axes to keep.
 
     Returns
     -------
@@ -577,33 +663,7 @@ def Flatten(inputs, axis=0, num_axes=-1, keep_axes=None, **kwargs):
     >>> [24]
 
     """
-    arguments = ParseArgs(locals())
-
-    output = Tensor.CreateOperator(op_type='Flatten', **arguments)
-
-    if inputs.shape is not None:
-        fake_shape = inputs.shape[:]
-        fake_shape = [1 if dim is None else dim for dim in fake_shape]
-        if keep_axes is not None:
-            if keep_axes > len(inputs.shape):
-                raise ValueError(
-                    'The total number of axes is {}, can not keep {}.'
-                        .format(len(inputs.shape), keep_axes))
-            total_count = np.prod(fake_shape)
-            output.shape = []
-            for i in range(keep_axes - 1):
-                output.shape.append(inputs.shape[i])
-                total_count *= fake_shape[i]
-            if total_count != 1:
-                output.shape.append(total_count)
-        else:
-            if num_axes == -1: num_axes = len(inputs.shape) - axis
-            elif num_axes == 0:
-                raise ValueError('num_axes must > 0 or be -1.')
-            num_flatten = np.prod(fake_shape[axis : axis + num_axes])
-            output.shape = inputs.shape[: axis] + [num_flatten] + inputs.shape[axis + num_axes :]
-
-    return output
+    return Tensor.CreateOperator(op_type='Flatten', **ParseArgs(locals()))
 
 
 @OpSchema.Inputs(1)
@@ -676,20 +736,7 @@ def Squeeze(inputs, axis=None, **kwargs):
     >>> print(Squeeze(a, axis=0).shape)
 
     """
-    arguments = ParseArgs(locals())
-
-    output = Tensor.CreateOperator(op_type='Squeeze', **arguments)
-
-    if inputs.shape is not None:
-        output_shape = []
-        if axis: axis += (0 if axis >= 0 else len(inputs.shape))
-        for idx, dim in enumerate(inputs.shape[:]):
-            if dim != 1 or \
-                (axis and dim == 1 and idx != axis):
-                    output_shape.append(dim)
-        output.shape = output_shape
-
-    return output
+    return Tensor.CreateOperator(op_type='Squeeze', **ParseArgs(locals()))
 
 
 @OpSchema.Inputs(1)
@@ -775,7 +822,27 @@ def Arange(start, stop=None, step=1, dtype='float32', **kwargs):
 
 
 @OpSchema.Inputs(1)
-def Multinomial(inputs, num_samples=1, normalize=False, **kwargs):
+def NonZero(inputs, **kwargs):
+    """Return the indices of non-zero elements.
+
+    **Type Constraints**: (*bool*, *int8*, *uint8*, *int32*, *int64*, *float16*, *float32*, *float64*)
+
+    Parameters
+    ----------
+    inputs : Tensor
+        The input tensor.
+
+    Returns
+    -------
+    Tensor
+        A *int64* tensor contains the indices.
+
+    """
+    return Tensor.CreateOperator('NonZero', **ParseArgs(locals()))
+
+
+@OpSchema.Inputs(1)
+def Multinomial(inputs, num_samples=1, eps=0., normalize=False, **kwargs):
     """Return a tensor where each row contains ``num_samples``,
     sampled from the multinomial distribution.
 
@@ -792,6 +859,8 @@ def Multinomial(inputs, num_samples=1, normalize=False, **kwargs):
         The input tensor.
     num_samples : int, optional, default=1
         The number of samples.
+    eps : float, optional, default=0.
+        The prob to a uniform sampling.
     normalize : boolean, optional, default=False
         Whether to normalize the inputs.
 

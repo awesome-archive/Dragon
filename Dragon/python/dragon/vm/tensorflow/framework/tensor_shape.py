@@ -13,7 +13,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from dragon.core.tensor import Tensor
+from dragon.core.tensor import Tensor as _Tensor
 
 
 class Dimension(object):
@@ -44,6 +44,18 @@ class Dimension(object):
         if self._value is None or other.value is None:
             return None
         return self._value == other.value
+
+    def __ne__(self, other):
+        try:
+            other = as_dimension(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+        if self._value is None or other.value is None:
+            return None
+        return self._value != other.value
+
+    def __int__(self):
+        return self._value
 
 
 def as_dimension(value):
@@ -114,4 +126,5 @@ def get_shape(self):
     return TensorShape(self.shape)
 
 
-Tensor.get_shape = get_shape
+# The Monkey Patching
+_Tensor.get_shape = get_shape
